@@ -36,7 +36,7 @@ loss_fct = nn.MSELoss()
 optimizer = torch.optim.Adam(lform_model.parameters(), lr=0.01)
 losses = []
 # Training loop
-for epoch in range(3):
+for epoch in range(5000):
     for batch_of_data in my_data_loader:
 
         batch_size, seq_length, _ = batch_of_data.size()
