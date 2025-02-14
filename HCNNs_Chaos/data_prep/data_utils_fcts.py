@@ -115,7 +115,7 @@ class SlidingWindowDataset(Dataset):
         self.window_size = window_size
         self.slided_data = self.sliding_windows_shift_to(tensor_data, window_size)
 
-    def sliding_windows_shift_to(self, tensor_data, window_size) -> torch.Tensor:
+    def sliding_windows_shift_to(self)-> torch.Tensor :#, tensor_data, window_size) -> torch.Tensor:
         """
         Creates sliding window from data.
         
@@ -126,10 +126,10 @@ class SlidingWindowDataset(Dataset):
         Returns:
         torch.tensor: 4D tensor of shape (num_batches, window_size, 1, p)
         """
-        num_batches = len(tensor_data) - window_size + 1
+        num_batches = len(self.data) - self.window_size + 1
         x = []
         for i in range(num_batches):
-            _x = tensor_data[i:i+window_size]
+            _x = self.data[i:i+self.window_size]
             x.append(_x)
         return torch.stack(x).float().to(self.device)  # Ensures that the output is double precision
 
