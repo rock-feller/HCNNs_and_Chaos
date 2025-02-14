@@ -24,6 +24,9 @@ class Vanilla_Model(nn.Module):
 
         self.cell = vanilla_cell(n_obs, n_hid_vars, init_range)
         self.device = self.cell._get_default_device()
+        self.name = self._generate_model_name()
+
+
 
         if self.s0_nature.lower() == "zeros_":
             h0 = torch.zeros(1, n_hid_vars, device=self.device)
@@ -35,6 +38,17 @@ class Vanilla_Model(nn.Module):
 
         # Make `h0` a trainable parameter (single vector, not repeated for batch size)
         self.h0 = nn.Parameter(h0, requires_grad=self.train_s0)
+
+    def _generate_model_name(self) -> str:
+        """Generates a unique model name based on configuration."""
+        name = f"VanillaModel_obs{self.n_obs}_hid{self.n_hid_vars}"
+        if self.s0_nature == "random_":
+            name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
+        else:
+            name += "_zeroInit"
+        if self.train_s0:
+            name += "_trainableS0"
+        return name
 
     def initial_hidden_state(self) -> nn.Parameter:
         """
@@ -121,6 +135,32 @@ class Vanilla_Model(nn.Module):
 
         return expectations, states, delta_terms, forecasts, future_states
 
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
+        """Saves model checkpoint."""
+        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
+        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": loss
+        }, checkpoint_path)
+        print(f"Checkpoint saved at {checkpoint_path}")
+
+    def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
+        """Loads model checkpoint."""
+        if os.path.isfile(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path)
+            self.load_state_dict(checkpoint["model_state_dict"])  # Load model parameters
+            if optimizer is not None:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])  # Load optimizer state
+            epoch = checkpoint["epoch"]
+            loss = checkpoint["loss"]
+            print(f"Checkpoint loaded from {checkpoint_path}. Epoch: {epoch}, Loss: {loss}")
+            return epoch, loss
+        else:
+            raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
 class PTF_Model(nn.Module):
 
     def __init__(self, n_obs: int, n_hid_vars: int,
@@ -143,6 +183,9 @@ class PTF_Model(nn.Module):
 
         self.cell = ptf_cell(n_obs, n_hid_vars, init_range)
         self.device = self.cell._get_default_device()
+        self.name = self._generate_model_name()
+
+
 
         if self.s0_nature.lower() == "zeros_":
             h0 = torch.zeros(1, n_hid_vars, device=self.device)
@@ -155,6 +198,17 @@ class PTF_Model(nn.Module):
         # Make `h0` a trainable parameter (single vector, not repeated for batch size)
         self.h0 = nn.Parameter(h0, requires_grad=self.train_s0)
 
+    def _generate_model_name(self) -> str:
+        """Generates a unique model name based on configuration."""
+        name = f"PTFModel_obs{self.n_obs}_hid{self.n_hid_vars}"
+        if self.s0_nature == "random_":
+            name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
+        else:
+            name += "_zeroInit"
+        if self.train_s0:
+            name += "_trainableS0"
+        return name
+    
     def initial_hidden_state(self) -> nn.Parameter:
         """
         Return the trainable initial hidden state.
@@ -188,6 +242,18 @@ class PTF_Model(nn.Module):
         else:
             new_prob = 0.
             return new_prob
+        
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
+        """Saves model checkpoint."""
+        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
+        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": loss
+        }, checkpoint_path)
+        print(f"Checkpoint saved at {checkpoint_path}")
         
 
 
@@ -277,6 +343,32 @@ class PTF_Model(nn.Module):
 
         return expectations, states, delta_terms, partial_delta_terms, forecasts, future_states
     
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
+        """Saves model checkpoint."""
+        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
+        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": loss
+        }, checkpoint_path)
+        print(f"Checkpoint saved at {checkpoint_path}")
+
+    def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
+        """Loads model checkpoint."""
+        if os.path.isfile(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path)
+            self.load_state_dict(checkpoint["model_state_dict"])  # Load model parameters
+            if optimizer is not None:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])  # Load optimizer state
+            epoch = checkpoint["epoch"]
+            loss = checkpoint["loss"]
+            print(f"Checkpoint loaded from {checkpoint_path}. Epoch: {epoch}, Loss: {loss}")
+            return epoch, loss
+        else:
+            raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
 class LForm_Model(nn.Module):
 
     def __init__(self, n_obs: int, n_hid_vars: int,
@@ -294,6 +386,8 @@ class LForm_Model(nn.Module):
 
         self.cell = lstm_cell(n_obs, n_hid_vars, init_range)
         self.device = self.cell._get_default_device()
+        self.name = self._generate_model_name()
+
 
         if self.s0_nature.lower() == "zeros_":
             h0 = torch.zeros(1, n_hid_vars, device=self.device)
@@ -305,6 +399,18 @@ class LForm_Model(nn.Module):
 
         # Make `h0` a trainable parameter (single vector, not repeated for batch size)
         self.h0 = nn.Parameter(h0, requires_grad=self.train_s0)
+
+    def _generate_model_name(self) -> str:
+        """Generates a unique model name based on configuration."""
+        name = f"LFormModel_obs{self.n_obs}_hid{self.n_hid_vars}"
+        if self.s0_nature == "random_":
+            name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
+        else:
+            name += "_zeroInit"
+        if self.train_s0:
+            name += "_trainableS0"
+        return name
+
 
     def initial_hidden_state(self) -> nn.Parameter:
         """
@@ -391,7 +497,32 @@ class LForm_Model(nn.Module):
 
         return expectations, states, delta_terms, forecasts, future_states
 
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
+        """Saves model checkpoint."""
+        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
+        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": loss
+        }, checkpoint_path)
+        print(f"Checkpoint saved at {checkpoint_path}")
 
+
+    def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
+        """Loads model checkpoint."""
+        if os.path.isfile(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path)
+            self.load_state_dict(checkpoint["model_state_dict"])  # Load model parameters
+            if optimizer is not None:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])  # Load optimizer state
+            epoch = checkpoint["epoch"]
+            loss = checkpoint["loss"]
+            print(f"Checkpoint loaded from {checkpoint_path}. Epoch: {epoch}, Loss: {loss}")
+            return epoch, loss
+        else:
+            raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
 
 class LSpa_Model(nn.Module):
 
@@ -416,6 +547,10 @@ class LSpa_Model(nn.Module):
 
         self.device = self.cell._get_default_device()
 
+        self.name = self._generate_model_name()
+
+
+
         if self.s0_nature.lower() == "zeros_":
             h0 = torch.zeros(1, n_hid_vars, device=self.device)
         elif self.s0_nature.lower() == "random_":
@@ -426,6 +561,18 @@ class LSpa_Model(nn.Module):
 
         # Make `h0` a trainable parameter (single vector, not repeated for batch size)
         self.h0 = nn.Parameter(h0, requires_grad=self.train_s0)
+
+
+    def _generate_model_name(self) -> str:
+        """Generates a unique model name based on configuration."""
+        name = f"LSpaModel_obs{self.n_obs}_hid{self.n_hid_vars}"
+        if self.s0_nature == "random_":
+            name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
+        else:
+            name += "_zeroInit"
+        if self.train_s0:
+            name += "_trainableS0"
+        return name
 
     def initial_hidden_state(self) -> nn.Parameter:
         """
@@ -511,3 +658,30 @@ class LSpa_Model(nn.Module):
             forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
 
         return expectations, states, delta_terms, forecasts, future_states 
+
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
+        """Saves model checkpoint."""
+        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
+        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": loss
+        }, checkpoint_path)
+        print(f"Checkpoint saved at {checkpoint_path}")
+
+
+    def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
+        """Loads model checkpoint."""
+        if os.path.isfile(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path)
+            self.load_state_dict(checkpoint["model_state_dict"])  # Load model parameters
+            if optimizer is not None:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])  # Load optimizer state
+            epoch = checkpoint["epoch"]
+            loss = checkpoint["loss"]
+            print(f"Checkpoint loaded from {checkpoint_path}. Epoch: {epoch}, Loss: {loss}")
+            return epoch, loss
+        else:
+            raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
