@@ -126,6 +126,7 @@ def RosslerSolver(start: int, stop: int, ics: Tuple[float, float, float], time_g
 
     """
     x0, y0, z0 = ics
+    
     state0 = [x0, y0, z0]
     state0 = [x0 , y0 , z0]
     timegrid_array = np.arange(start, stop, time_grid)
@@ -140,7 +141,7 @@ def RosslerSolver(start: int, stop: int, ics: Tuple[float, float, float], time_g
 
 
 def rabi_fabri_eqs(state, t):
-    alpha = 0.14
+    alpha = 0.98
     gamma = 0.1
     x, y, z = state
     """
@@ -190,7 +191,7 @@ def RabinovichFabrikantSolver(start: int, stop: int, ics: Tuple[float, float, fl
             
      Outputs shape: Tensor shape : (nber of points , 3, 1)
     """
-    x0, y0, z0 = ics
+    x0, y0, z0 = ics  # for chaotic trajs consider 0.1, 0.1, 0.1
     state0 = [x0, y0, z0]
     timegrid_array = np.arange(start, stop, time_grid)
     states = odeint(rabi_fabri_eqs, state0, timegrid_array)
