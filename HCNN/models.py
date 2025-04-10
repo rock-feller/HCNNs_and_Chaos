@@ -37,7 +37,6 @@ HCNNLSpaForwardOutput = namedtuple(
 )
 
 
-
 class Vanilla_Model(nn.Module):
     """
     Wrapper Model for the Vanilla HCNN Cell.
@@ -130,6 +129,7 @@ class Vanilla_Model(nn.Module):
 
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
+        self.n_state_vars = self.n_hid_vars + self.n_obs_vars
         
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
@@ -147,14 +147,14 @@ class Vanilla_Model(nn.Module):
 
 
         if self.s0_nature.lower() == "zeros_":
-            s0 = torch.zeros(1, n_hid_vars, device=self.device)
+            s0 = torch.zeros(1, self.n_state_vars, device=self.device)
         elif self.s0_nature.lower() == "random_":
             low, high = self.init_range
-            s0 = torch.empty(1, n_hid_vars, device=self.device).uniform_(low, high)
+            s0 = torch.empty(1, self.n_state_vars, device=self.device).uniform_(low, high)
         else:
             raise ValueError("s0_nature must be either 'zeros_' or 'random_'")
 
-        # Make `h0` a trainable parameter (single vector, not repeated for batch size)
+        # Make `s0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
     def _generate_model_name(self) -> str:
@@ -173,7 +173,7 @@ class Vanilla_Model(nn.Module):
         """
         Return the trainable initial hidden state.
         """
-        return self.h0
+        return self.s0
     
 
     def forward(self, data_window: torch.Tensor,
@@ -224,19 +224,19 @@ class Vanilla_Model(nn.Module):
         -----
         - During training, teacher forcing is used on the `data_window` to guide state updates.
         - During forecasting, the last state from the input sequence is propagated without teacher forcing.
-        - The initial hidden state `h0` is shared across all sequences and may be learned or fixed depending
+        - The initial hidden state `s0` is shared across all sequences and may be learned or fixed depending
           on `train_s0`.
         """
 
         batch_size, seq_length, _ = data_window.size()
 
         # Initialize tensors for observed data
-        states = torch.zeros(batch_size, seq_length, self.n_hid_vars, device=self.device)
-        expectations = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
-        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
+        states = torch.zeros(batch_size, seq_length, self.n_state_vars, device=self.device)
+        expectations = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
+        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
 
         # Use the same initial hidden state for all sequences in the batch
-        states[:, 0, :] = self.h0
+        states[:, 0, :] = self.s0
         if seq_length > 1:
 
             # Process observed data
@@ -291,8 +291,8 @@ class Vanilla_Model(nn.Module):
         future_states = None
 
         if forecast_horizon:
-            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs, device=self.device)
-            future_states = torch.zeros(batch_size, forecast_horizon, self.n_hid_vars, device=self.device)
+            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=self.device)
+            future_states = torch.zeros(batch_size, forecast_horizon, self.n_state_vars, device=self.device)
             teach_forc = torch.matmul(last_delta_term,self.cell.ConMat)
 
             r_state = states[:, 0, :] - teach_forc
@@ -341,6 +341,11 @@ class Vanilla_Model(nn.Module):
             return epoch, loss
         else:
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
+
+
+
+
 
 class PTF_Model(nn.Module):
     """
@@ -395,13 +400,13 @@ class PTF_Model(nn.Module):
         Initial hidden state strategy.
 
     train_s0 : bool
-        Whether `h0` is learnable.
+        Whether `s0` is learnable.
 
     batch_size : int
         Number of sequences processed per batch.
 
     init_range : Tuple[float, float]
-        Initialization range for both weights and optionally `h0`.
+        Initialization range for both weights and optionally `s0`.
 
     target_prob : float
         Maximum dropout probability for teacher forcing adjustment.
@@ -414,7 +419,7 @@ class PTF_Model(nn.Module):
     cell : ptf_cell
         The core computation cell that implements dropout-modulated teacher forcing.
 
-    h0 : nn.Parameter
+    s0 : nn.Parameter
         Initial hidden state of shape (1, n_hid_vars). Shared across batch.
         May be fixed or trainable depending on `train_s0`.
 
@@ -430,7 +435,7 @@ class PTF_Model(nn.Module):
         Executes a forward pass through the model using partial teacher forcing.
 
     initial_hidden_state() -> nn.Parameter
-        Returns the trainable initial hidden state `h0`.
+        Returns the trainable initial hidden state `s0`.
 
     decrease_dropout_prob(current_epoch: int, num_epochs: int, prob: float) -> float
         Adjusts the dropout probability linearly during training.
@@ -457,7 +462,8 @@ class PTF_Model(nn.Module):
         super(PTF_Model, self).__init__()
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
-        
+        self.n_state_vars = self.n_hid_vars + self.n_obs_vars
+
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
         
@@ -476,19 +482,19 @@ class PTF_Model(nn.Module):
 
 
         if self.s0_nature.lower() == "zeros_":
-            h0 = torch.zeros(1, n_hid_vars, device=self.device)
+            s0 = torch.zeros(1, self.n_state_vars, device=self.device)
         elif self.s0_nature.lower() == "random_":
             low, high = self.init_range
-            h0 = torch.empty(1, n_hid_vars, device=self.device).uniform_(low, high)
+            s0 = torch.empty(1, self.n_state_vars, device=self.device).uniform_(low, high)
         else:
             raise ValueError("s0_nature must be either 'zeros_' or 'random_'")
 
-        # Make `h0` a trainable parameter (single vector, not repeated for batch size)
-        self.h0 = nn.Parameter(h0, requires_grad=self.train_s0)
+        # Make `s0` a trainable parameter (single vector, not repeated for batch size)
+        self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
     def _generate_model_name(self) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"PTFModel_obs{self.n_obs}_hid{self.n_hid_vars}"
+        name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -501,7 +507,7 @@ class PTF_Model(nn.Module):
         """
         Return the trainable initial hidden state.
         """
-        return self.h0
+        return self.s0
     
     def decrease_dropout_prob(self,  current_epoch :int , num_epochs:int, prob:float  )-> float:
 
@@ -606,13 +612,13 @@ class PTF_Model(nn.Module):
         batch_size, seq_length, _ = data_window.size()
 
         # Initialize tensors for observed data
-        states = torch.zeros(batch_size, seq_length, self.n_hid_vars, device=self.device)
-        expectations = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
-        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
-        partial_delta_terms = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
+        states = torch.zeros(batch_size, seq_length, self.n_state_vars, device=self.device)
+        expectations = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
+        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
+        partial_delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
 
         # Use the same initial hidden state for all sequences in the batch
-        states[:, 0, :] = self.h0
+        states[:, 0, :] = self.s0
         if seq_length > 1:
 
         # Process observed data
@@ -655,8 +661,8 @@ class PTF_Model(nn.Module):
         future_states = None
 
         if forecast_horizon:
-            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs, device=self.device)
-            future_states = torch.zeros(batch_size, forecast_horizon, self.n_hid_vars, device=self.device)
+            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=self.device)
+            future_states = torch.zeros(batch_size, forecast_horizon, self.n_state_vars, device=self.device)
 
             teach_forc = torch.matmul(last_partial_delta_term,self.cell.ConMat)
             r_state = states[:, 0, :] - teach_forc
@@ -705,6 +711,15 @@ class PTF_Model(nn.Module):
             return epoch, loss
         else:
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
+
+
+
+
+
+
+
+
 
 class LForm_Model(nn.Module):
     """
@@ -803,6 +818,7 @@ class LForm_Model(nn.Module):
         super(LForm_Model, self).__init__()
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
+        self.n_state_vars = self.n_hid_vars + self.n_obs_vars
 
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
@@ -818,19 +834,19 @@ class LForm_Model(nn.Module):
 
 
         if self.s0_nature.lower() == "zeros_":
-            h0 = torch.zeros(1, n_hid_vars, device=self.device)
+            s0 = torch.zeros(1, self.n_state_vars, device=self.device)
         elif self.s0_nature.lower() == "random_":
             low, high = self.init_range
-            h0 = torch.empty(1, n_hid_vars, device=self.device).uniform_(low, high)
+            s0 = torch.empty(1, self.n_state_vars, device=self.device).uniform_(low, high)
         else:
             raise ValueError("s0_nature must be either 'zeros_' or 'random_'")
 
-        # Make `h0` a trainable parameter (single vector, not repeated for batch size)
-        self.h0 = nn.Parameter(h0, requires_grad=self.train_s0)
+        # Make `s0` a trainable parameter (single vector, not repeated for batch size)
+        self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
     def _generate_model_name(self) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"LFormModel_obs{self.n_obs}_hid{self.n_hid_vars}"
+        name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -844,7 +860,7 @@ class LForm_Model(nn.Module):
         """
         Return the trainable initial hidden state.
         """
-        return self.h0
+        return self.s0
     
 
     def forward(self, data_window: torch.Tensor,
@@ -902,12 +918,12 @@ class LForm_Model(nn.Module):
         batch_size, seq_length, _ = data_window.size()
 
         # Initialize tensors for observed data
-        states = torch.zeros(batch_size, seq_length, self.n_hid_vars, device=self.device)
-        expectations = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
-        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
+        states = torch.zeros(batch_size, seq_length, self.n_state_vars, device=self.device)
+        expectations = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
+        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
 
         # Use the same initial hidden state for all sequences in the batch
-        states[:, 0, :] = self.h0
+        states[:, 0, :] = self.s0
         if seq_length > 1:
 
             # Process observed data
@@ -947,8 +963,8 @@ class LForm_Model(nn.Module):
         future_states = None
 
         if forecast_horizon:
-            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs, device=self.device)
-            future_states = torch.zeros(batch_size, forecast_horizon, self.n_hid_vars, device=self.device)
+            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=self.device)
+            future_states = torch.zeros(batch_size, forecast_horizon, self.n_state_vars, device=self.device)
 
             teach_forc = torch.matmul(last_delta_term,self.cell.ConMat)
             r_state = states[:, seq_length - 1, :] - teach_forc
@@ -998,6 +1014,12 @@ class LForm_Model(nn.Module):
             return epoch, loss
         else:
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
+
+
+
+
+
 
 class LSpa_Model(nn.Module):
     """
@@ -1092,7 +1114,7 @@ class LSpa_Model(nn.Module):
         Executes training and optional forecasting steps.
 
     initial_hidden_state() -> nn.Parameter
-        Returns the initial hidden state tensor `h0`.
+        Returns the initial hidden state tensor `s0`.
 
     save_checkpoint(epoch: int, loss: float, optimizer: torch.optim.Optimizer)
         Saves the model and optimizer state to a checkpoint.
@@ -1139,20 +1161,20 @@ class LSpa_Model(nn.Module):
 
 
         if self.s0_nature.lower() == "zeros_":
-            h0 = torch.zeros(1, n_hid_vars, device=self.device)
+            s0 = torch.zeros(1, self.cell.n_state_vars, device=self.device)
         elif self.s0_nature.lower() == "random_":
             low, high = self.init_range
-            h0 = torch.empty(1, n_hid_vars, device=self.device).uniform_(low, high)
+            s0 = torch.empty(1, self.cell.n_state_vars, device=self.device).uniform_(low, high)
         else:
             raise ValueError("s0_nature must be either 'zeros_' or 'random_'")
 
-        # Make `h0` a trainable parameter (single vector, not repeated for batch size)
-        self.h0 = nn.Parameter(h0, requires_grad=self.train_s0)
+        # Make `s0` a trainable parameter (single vector, not repeated for batch size)
+        self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
 
     def _generate_model_name(self) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"LSpaModel_obs{self.n_obs}_hid{self.n_hid_vars}"
+        name = f"LSpaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -1165,11 +1187,11 @@ class LSpa_Model(nn.Module):
         """
         Return the trainable initial hidden state.
         """
-        return self.h0
+        return self.s0
     
 
     def forward(self, data_window: torch.Tensor,
-                forecast_horizon: Optional[int] = None) -> HCNNLFormForwardOutput:
+                forecast_horizon: Optional[int] = None) -> HCNNLSpaForwardOutput:
         """
         Executes a forward pass through the HCNNLSpa model over a sequence of observations.
         Supports both teacher-forced training and optional auto-regressive forecasting.
@@ -1222,12 +1244,12 @@ class LSpa_Model(nn.Module):
         batch_size, seq_length, _ = data_window.size()
 
         # Initialize tensors for observed data
-        states = torch.zeros(batch_size, seq_length, self.n_hid_vars, device=self.device)
-        expectations = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
-        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs, device=self.device)
+        states = torch.zeros(batch_size, seq_length, self.cell.n_state_vars, device=self.device)
+        expectations = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
+        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
 
         # Use the same initial hidden state for all sequences in the batch
-        states[:, 0, :] = self.h0
+        states[:, 0, :] = self.s0
         if seq_length > 1:
 
             # Process observed data
@@ -1282,8 +1304,8 @@ class LSpa_Model(nn.Module):
         future_states = None
 
         if forecast_horizon:
-            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs, device=self.device)
-            future_states = torch.zeros(batch_size, forecast_horizon, self.n_hid_vars, device=self.device)
+            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=self.device)
+            future_states = torch.zeros(batch_size, forecast_horizon, self.cell.n_state_vars, device=self.device)
             teach_forc = torch.matmul(last_delta_term,self.cell.ConMat)
             r_state = states[:, 0, :] - teach_forc
             next_state = self.cell.Sparse_A(torch.tanh(r_state))
@@ -1334,3 +1356,4 @@ class LSpa_Model(nn.Module):
             return epoch, loss
         else:
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
