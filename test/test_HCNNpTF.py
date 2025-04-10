@@ -9,10 +9,17 @@ from collections import namedtuple
 
 
 # Named tuple for the output of the Vanilla HCNN model
-HCNNLFormForwardOutput = namedtuple(
-    "HCNNLFormForwardOutput",
+VanillaHCNNForwardOutput = namedtuple(
+    "VanillaHCNNForwardOutput", 
     ["expectations", "states", "delta_terms", "forecasts", "future_states"]
 )
+
+# Named tuple for the output of the HCNN-pTF model
+HCNNpTFForwardOutput = namedtuple(
+    "HCNNpTFForwardOutput",
+    ["expectations", "states", "delta_terms", "partial_delta_terms", "forecasts", "future_states"]
+)
+
 
 class CustomLinear(nn.Linear):
     """
@@ -1430,116 +1437,145 @@ class LargeSparse_cell(nn.Module):
 
 
 
-class LForm_Model(nn.Module):
+
+
+
+
+
+
+
+class PTF_Model(nn.Module):
     """
-    LSTM-Formulation HCNN Wrapper Model (HCNN-LForm).
+    Partial Teacher Forcing HCNN Wrapper Model (HCNN-pTF).
 
-    This model wraps the `lstm_cell`, a nonlinear HCNN cell that introduces memory-preserving 
-    behavior inspired by LSTM dynamics. It incorporates a residual-corrected state transition 
-    and a learnable diagonal matrix (`D`) for modulating long-term dependencies.
-
-    The model supports full teacher forcing for supervised sequence training and can forecast
-    future states in an auto-regressive fashion without additional supervision.
+    This model wraps the `ptf_cell` to provide a training and forecasting interface 
+    that incorporates **partial teacher forcing** via dropout scaling. It supports:
+    - Full teacher forcing on observed data
+    - Dropout-controlled blending of predicted and observed deltas (`y_hat - y_true`)
+    - Optional forecasting beyond the observed horizon using autonomous rollouts
 
     Parameters
     ----------
-    `n_obs_vars` : int
-        Number of observable variables (i.e., output dimensionality).
+    n_obs_vars : int
+        Number of observed variables (i.e., dimensionality of model output at each time step).
 
-    `n_hid_vars` : int
+    n_hid_vars : int
         Number of hidden (latent) variables in the state.
 
-    `s0_nature` : Literal['zeros_', 'random_']
-        Strategy for initializing the initial hidden state `s0`.
-        - 'zeros_': Initialize as a zero vector.
-        - 'random_': Initialize uniformly using `init_range`.
+    s0_nature : Literal['zeros_', 'random_']
+        Strategy for initializing the initial hidden state `s0`:
+        - 'zeros_': All-zero initialization.
+        - 'random_': Uniform random initialization within `init_range`.
 
-    `train_s0` : bool
-        If True, the initial state `s0` is a trainable parameter.
+    train_s0 : bool
+        Whether the initial hidden state `s0` is a learnable parameter.
 
-    `batch_size` : int, optional
+    batch_size : int, optional
         Number of sequences to process in parallel. Default is 1.
 
-    `init_range` : Tuple[float, float], optional
-        Range for uniform initialization when `s0_nature='random_'`. Also passed to the internal cell.
+    init_range : Tuple[float, float], optional
+        Tuple specifying the range for uniform weight initialization.
+        Also used when `s0_nature='random_'`. Default is (-0.75, 0.75).
 
-        
+    target_prob : float, optional
+        Maximum dropout probability for partial teacher forcing, used to compute delta scaling
+        in the later epochs of training. Default is 0.25.
+
+    drop_output : bool, optional
+        If True, indicates whether to apply dropout also to the model output.
+        (Currently reserved for future use.)
+
     Direct Attributes (from inputs)
     -------------------------------
-    `n_obs_vars` : int
+    n_obs : int
         Number of observed variables.
 
-    `n_hid_vars` : int
+    n_hid_vars : int
         Number of hidden variables.
 
-    `s0_nature` : str
-        Initial state setup strategy ('zeros_' or 'random_').
+    s0_nature : str
+        Initial hidden state strategy.
 
-    `train_s0` : bool
-        Whether the initial hidden state `s0` is trainable.
+    train_s0 : bool
+        Whether `s0` is learnable.
 
-    `batch_size` : int
-        Number of parallel input sequences to process.
+    batch_size : int
+        Number of sequences processed per batch.
 
-    `init_range` : Tuple[float, float]
-        Initialization range for random initialization.
+    init_range : Tuple[float, float]
+        Initialization range for both weights and optionally `s0`.
 
+    target_prob : float
+        Maximum dropout probability for teacher forcing adjustment.
+
+    drop_output : bool
+        Flag for extending dropout logic to output layer.
 
     Indirect Attributes (initialized internally)
     --------------------------------------------
+    cell : ptf_cell
+        The core computation cell that implements dropout-modulated teacher forcing.
 
-    `cell` : lstm_cell
-        The core recurrent computation unit of the model..
+    s0 : nn.Parameter
+        Initial hidden state of shape (1, n_hid_vars). Shared across batch.
+        May be fixed or trainable depending on `train_s0`.
 
-    s0 : torch.nn.Parameter
-        The initial hidden state tensor of shape (1, n_hid_vars).
-        Repeated across the batch in the forward pass.
+    name : str
+        A unique name generated from model configuration for saving and loading.
 
-    `name` : str
-        A unique model name based on initialization and training configuration.
-
-    `device` : torch.device
-        Computation device (CUDA, MPS, or CPU) used by the model.
-
+    device : torch.device
+        Computation device used by the model (CUDA, MPS, or CPU).
 
     Methods
     -------
-    forward(data_window: torch.Tensor, forecast_horizon: Optional[int] = None) -> HCNNLFormForwardOutput
-        Performs forward pass for the entire sequence, including optional future forecasting.
+    forward(data_window: torch.Tensor, forecast_horizon: Optional[int] = None, prob: float = 0.0) -> PTFHCNNForwardOutput
+        Executes a forward pass through the model using partial teacher forcing.
 
-    initial_hidden_state() -> nn.Parameter:
-        Returns the learnable initial state vector.
+    initial_hidden_state() -> nn.Parameter
+        Returns the trainable initial hidden state `s0`.
 
-    save_checkpoint(epoch: int, loss: float, optimizer: torch.optim.Optimizer) -> None:
-        Saves a checkpoint of the model and optimizer state.
+    decrease_dropout_prob(current_epoch: int, num_epochs: int, prob: float) -> float
+        Adjusts the dropout probability linearly during training.
+        Increases from 0 to `target_prob` over the second half of training epochs.
 
-    load_checkpoint(checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None) -> Tuple[int, float]:
-        Loads a saved checkpoint and optionally restores the optimizer state.
+    save_checkpoint(epoch: int, loss: float, optimizer: torch.optim.Optimizer)
+        Saves model weights, optimizer state, and training loss to a checkpoint file.
+
+    Notes
+    -----
+    - Dropout is applied to the delta term (`y_true - y_hat`) before state update.
+    - This allows a gradual relaxation from supervised to autonomous dynamics during training.
+    - The same initial hidden state is used across all batch items unless `train_s0` is True.
     """
 
 
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
                  train_s0: bool, batch_size: int = 1,
-                 init_range: Tuple[float, float] = (-0.75, 0.75),
-                 init_diag: float = 1.0):
+                 init_range: Tuple[float, float] = (-0.75, 0.75), 
+                 target_prob: float = 0.25 ,
+                 drop_output:bool = False):
         
-        super(LForm_Model, self).__init__()
+        super(PTF_Model, self).__init__()
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
 
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
-
+        
         self.batch_size = batch_size
         self.init_range = init_range
-        self.init_diag = init_diag
+        self.target_prob = target_prob
+        self.drop_output =  drop_output
 
-        self.cell = lstm_cell(n_obs_vars= self.n_obs_vars,n_hid_vars= self.n_hid_vars,
-                               init_range = self.init_range, init_diag=self.init_diag)
+
+        self.cell = ptf_cell(n_obs_vars = self.n_obs_vars, n_hid_vars =self.n_hid_vars, 
+                             init_range = self.init_range)
+        
         self.device = self.cell._get_default_device()
         self.name = self._generate_model_name()
+
 
 
         if self.s0_nature.lower() == "zeros_":
@@ -1555,7 +1591,7 @@ class LForm_Model(nn.Module):
 
     def _generate_model_name(self) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+        name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -1563,65 +1599,111 @@ class LForm_Model(nn.Module):
         if self.train_s0:
             name += "_trainableS0"
         return name
-
-
+    
     def initial_hidden_state(self) -> nn.Parameter:
         """
         Return the trainable initial hidden state.
         """
         return self.s0
     
+    def decrease_dropout_prob(self,  current_epoch :int , num_epochs:int, prob:float  )-> float:
+
+        """This function adjusts the dropout probability based on the current epoch
+        Input shape:
+        current_epoch : int
+
+        the delta term that is added up to the current probability after each epoch 
+        as from  num_epochs/2 is calculated as:
+
+        delta = target_prob / (num_epochs / 2)
+
+        
+        Output shape:
+        prob : float"""
+        # self.target_prob = target_prob
+        # self.num_epochs = num_epochs
+
+        #delta = self.target_prob / (num_epochs / 2)
+
+
+        if current_epoch >= (num_epochs / 2):
+            new_prob = min(self.target_prob,  prob + (self.target_prob / (num_epochs / 2)))
+            return new_prob
+
+        else:
+            new_prob = 0.
+            return new_prob
+        
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
+        """Saves model checkpoint."""
+        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
+        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "loss": loss
+        }, checkpoint_path)
+        print(f"Checkpoint saved at {checkpoint_path}")
+        
+
 
     def forward(self, data_window: torch.Tensor,
-                forecast_horizon: Optional[int] = None) -> HCNNLFormForwardOutput:
+                forecast_horizon: Optional[int] = None,
+                prob: float = 0.0) -> HCNNpTFForwardOutput:
         """
-        Executes a forward pass through the HCNNLForm model over a sequence of observations.
-        Supports both teacher-forced training and optional auto-regressive forecasting.
-
+        Executes a forward pass through the Partial Teacher Forcing HCNN model (HCNN-pTF).
+        Supports dynamic control over the amount of teacher forcing via dropout scaling,
+        as well as optional future forecasting.
 
         Parameters
         ----------
-        `data_window` : torch.Tensor
-            Observed input sequence of shape (batch_size, sequence_length, n_obs_vars).
-            Represents a batch of multivariate time series.
+        data_window : torch.Tensor
+            Input observation sequence of shape (batch_size, sequence_length, n_obs_vars).
+            Each sample in the batch is a multivariate time series.
 
-        `forecast_horizon` : Optional[int], default=None
-            Number of future steps to forecast beyond the observed `data_window`.
-            If None, no forecasting is performed. If specified, the model enters
-            auto-regressive prediction mode for `forecast_horizon` steps.
+        forecast_horizon : Optional[int], default=None
+            If specified, the model forecasts this number of future time steps beyond the
+            provided `data_window` using auto-regressive unrolling.
+
+        prob : float, default=0.0
+            Dropout probability used in partial teacher forcing. A higher value corresponds
+            to weaker guidance from the observed data (`y_true`) during state transitions.
 
         Returns
         -------
-        HCNNLFormForwardOutput
-            A namedtuple containing the following tensors:
+        PTFHCNNForwardOutput
+            A namedtuple containing:
 
             - expectations : torch.Tensor
                 Predicted outputs for the observed sequence.
-                Shape: (batch_size, sequence_length, n_obs)
-
-            - states : torch.Tensor
-                Hidden states for each time step in the input window.
-                Shape: (batch_size, sequence_length, n_hid_vars)
-
-            - `delta_terms` : torch.Tensor
-                Differences between ground-truth and predicted observations (y_true - y_hat).
-                acros the input window.
                 Shape: (batch_size, sequence_length, n_obs_vars)
 
-            - `forecasts` : Optional[torch.Tensor]
-                Predicted observations for `forecast_horizon` future steps.
-                Only returned if `forecast_horizon` is specified.
-                Shape: (batch_size, forecast_horizon, n_obs_vars)
+            - states : torch.Tensor
+                Hidden state vectors for the observed sequence.
+                Shape: (batch_size, sequence_length, n_hid_vars)
 
-            - `future_states` : Optional[torch.Tensor]
-                Hidden states associated with the predicted future steps.
-                Shape: (batch_size, forecast_horizon, n_hid_vars)
+            - delta_terms : torch.Tensor
+                Differences between ground-truth and predicted observations (y_true - y_hat).
+                Shape: (batch_size, sequence_length, n_obs_vars)
+
+            - partial_delta_terms : torch.Tensor
+                Delta terms after applying dropout (i.e., scaled teacher forcing error).
+                Shape: (batch_size, sequence_length, n_obs_vars)
+
+            - forecasts : Optional[torch.Tensor]
+                Predicted outputs for `forecast_horizon` future steps.
+                Shape: (batch_size, forecast_horizon, n_obs_vars). Returns None if no forecasting.
+
+            - future_states : Optional[torch.Tensor]
+                Hidden state vectors for future steps.
+                Shape: (batch_size, forecast_horizon, n_hid_vars). Returns None if no forecasting.
 
         Notes
         -----
-        - The internal `lstm_cell` modulates memory with a diagonal transformation.
-        - The final state from the observed sequence is used to initialize future rollouts.
-        - Teacher forcing is applied for all observed inputs.
+        - Dropout is applied on the delta term (`y_true - y_hat`) before updating the internal state.
+        - Forecasting starts from the last state and proceeds without teacher forcing.
+        - The dropout is applied independently at each time step when `teacher_forcing` is active.
         """
 
         batch_size, seq_length, _ = data_window.size()
@@ -1630,42 +1712,46 @@ class LForm_Model(nn.Module):
         states = torch.zeros(batch_size, seq_length, self.n_state_vars, device=self.device)
         expectations = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
         delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
+        partial_delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
 
         # Use the same initial hidden state for all sequences in the batch
         states[:, 0, :] = self.s0
         if seq_length > 1:
 
-            # Process observed data
+        # Process observed data
             for t in range(seq_length - 1):
-                expectation, next_state, delta_term = self.cell(
+                expectation, next_state, delta_term , partial_delta_term= self.cell(
                     state=states[:, t, :],
-                    teacher_forcing=True,
+                    teacher_forcing=True, prob=prob,
                     observation=data_window[:, t, :]
                 )
                 expectations[:, t, :] = expectation
                 states[:, t + 1, :] = next_state
                 delta_terms[:, t, :] = delta_term
+                partial_delta_terms[:, t, :] = partial_delta_term
 
             # Final observed time step
-            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-            # expectations[:, seq_length - 1, :] = last_y_hat
-
             last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+            last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
+
             expectations[:, seq_length - 1, :] = last_y_hat
             delta_terms[:, seq_length - 1, :] = last_delta_term
-            # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
+            partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
+            
         else:
-
+            
             last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
-            
+            last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+            # teach_forc = torch.matmul(last_partial_delta_term,self.cell.ConMat)
+            # r_state = states[:, 0, :] - teach_forc
+            # next_state = self.cell.A(torch.tanh(r_state))
 
             expectations[:, seq_length - 1, :] = last_y_hat
             delta_terms[:, seq_length - 1, :] = last_delta_term
+            partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
 
         # Initialize tensors for forecasts
         forecasts = None
@@ -1675,19 +1761,18 @@ class LForm_Model(nn.Module):
             forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=self.device)
             future_states = torch.zeros(batch_size, forecast_horizon, self.n_state_vars, device=self.device)
 
-            teach_forc = torch.matmul(last_delta_term,self.cell.ConMat)
-            r_state = states[:, seq_length - 1, :] - teach_forc
-            lstm_block = self.cell.A(torch.tanh(r_state)) - r_state
-            next_state = r_state + self.cell.D(lstm_block)
+            teach_forc = torch.matmul(last_partial_delta_term,self.cell.ConMat)
+            r_state = states[:, 0, :] - teach_forc
+            next_state = self.cell.A(torch.tanh(r_state))
 
             with torch.no_grad():
                 # Use the last observed state as the starting point
-                future_states[:, 0, :] = next_state# states[:, seq_length - 1, :]
+                future_states[:, 0, :] =  next_state# states[:, seq_length - 1, :]
 
                 # Forecast future steps
                 for t in range(1, forecast_horizon):
-                    forecast, next_state, _ = self.cell(
-                        state=future_states[:, t - 1, :],
+                    forecast, next_state, _,__ = self.cell(
+                        state=future_states[:, t - 1, :],prob=0.,
                         teacher_forcing=False
                     )
                     forecasts[:, t - 1, :] = forecast
@@ -1695,7 +1780,8 @@ class LForm_Model(nn.Module):
 
             forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
 
-        return expectations, states, delta_terms, forecasts, future_states
+        return HCNNpTFForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms,
+                                    partial_delta_terms =partial_delta_terms, forecasts=forecasts, future_states=future_states )
 
     def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
         """Saves model checkpoint."""
@@ -1708,7 +1794,6 @@ class LForm_Model(nn.Module):
             "loss": loss
         }, checkpoint_path)
         print(f"Checkpoint saved at {checkpoint_path}")
-
 
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
@@ -1728,112 +1813,91 @@ class LForm_Model(nn.Module):
 
 
 
+def test_model_init_zero():
+    model = PTF_Model(n_obs_vars=5, n_hid_vars=10, s0_nature="zeros_", train_s0=False)
+    assert model.s0.shape == (1, 15)
+    assert torch.allclose(model.s0, torch.zeros_like(model.s0))
 
+def test_model_init_random():
+    model = PTF_Model(n_obs_vars=5, n_hid_vars=10, s0_nature="random_", train_s0=False, init_range=(-0.5, 0.5))
+    assert (model.s0 >= -0.5).all() and (model.s0 <= 0.5).all()
 
-
-
-
-import torch
-import pytest
-from torch.nn import MSELoss
-
-
-
-# @pytest.fixture
-# def lform_model_fixture():
-#     return LForm_Model(
-#         n_obs_vars=4,
-#         n_hid_vars=6,
-#         s0_nature='random_',
-#         train_s0=True,
-#         batch_size=2,
-#         init_range=(-0.5, 0.5),
-#         init_diag=0.7
-#     )
-
-
-def test_forward_shapes_teacher_forcing():
-    model = LForm_Model(
-        n_obs_vars=4,
-        n_hid_vars=6,
-        s0_nature='random_',
-        train_s0=True,
-        batch_size=2,
-        init_range=(-0.5, 0.5),
-        init_diag=0.7
-    )
-
-    batch_size, seq_len, n_obs = model.batch_size, 10, model.n_obs_vars
-    data_window = torch.randn(batch_size, seq_len, n_obs)
-
-    expectations, states, delta_terms, forecasts, future_states = model(data_window)
-
-    assert expectations.shape == (batch_size, seq_len, n_obs)
-    assert delta_terms.shape == (batch_size, seq_len, n_obs)
-    assert states.shape == (batch_size, seq_len, model.n_state_vars)
-    assert forecasts is None
-    assert future_states is None
-
-
-def test_forecasting_output_shapes():
-    model = LForm_Model(
-        n_obs_vars=4,
-        n_hid_vars=6,
-        s0_nature='random_',
-        train_s0=True,
-        batch_size=2,
-        init_range=(-0.5, 0.5),
-        init_diag=0.7
-    )
-    batch_size, seq_len, n_obs, horizon = model.batch_size, 8, model.n_obs_vars, 5
-    data_window = torch.randn(batch_size, seq_len, n_obs)
-
-    expectations, states, delta_terms, forecasts, future_states = model(data_window, forecast_horizon=horizon)
-
-    assert forecasts.shape == (batch_size, horizon, n_obs)
-    assert future_states.shape == (batch_size, horizon, model.n_state_vars)
-
-
-def test_requires_grad_on_trainable_s0():
-    model = LForm_Model(n_obs_vars=4, n_hid_vars=5, s0_nature='random_', train_s0=True)
+def test_model_trainable_flag():
+    model = PTF_Model(n_obs_vars=5, n_hid_vars=10, s0_nature="zeros_", train_s0=True)
     assert model.s0.requires_grad is True
 
+def test_forward_shapes_no_forecast():
+    model = PTF_Model(n_obs_vars=3, n_hid_vars=6, s0_nature="zeros_", train_s0=True)
+    data = torch.randn(2, 8, 3)
+    output = model(data_window=data, forecast_horizon=None, prob=0.2)
+    assert output.expectations.shape == (2, 8, 3)
+    assert output.states.shape == (2, 8, 9)
+    assert output.delta_terms.shape == (2, 8, 3)
+    assert output.partial_delta_terms.shape == (2, 8, 3)
+    assert output.forecasts is None
+    assert output.future_states is None
 
-def test_s0_zero_initialization():
-    model = LForm_Model(n_obs_vars=4, n_hid_vars=5, s0_nature='zeros_', train_s0=False)
-    assert torch.all(model.s0 == 0)
-    assert model.s0.requires_grad is False
+def test_forward_shapes_with_forecast():
+    model = PTF_Model(n_obs_vars=3, n_hid_vars=6, s0_nature="zeros_", train_s0=True)
+    data = torch.randn(2, 5, 3)
+    output = model(data_window=data, forecast_horizon=4, prob=0.2)
+    assert output.forecasts.shape == (2, 4, 3)
+    assert output.future_states.shape == (2, 4, 9)
+
+def test_forward_single_step_batch():
+    model = PTF_Model(n_obs_vars=3, n_hid_vars=6, s0_nature="zeros_", train_s0=True)
+    data = torch.randn(1, 1, 3)
+    output = model(data_window=data, forecast_horizon=2, prob=0.1)
+    assert output.expectations.shape == (1, 1, 3)
+    assert output.forecasts.shape == (1, 2, 3)
+
+def test_dropout_schedule():
+    model = PTF_Model(3, 6, "zeros_", train_s0=False, target_prob=0.5)
+    p1 = model.decrease_dropout_prob(current_epoch=1, num_epochs=10, prob=0.0)
+    p2 = model.decrease_dropout_prob(current_epoch=6, num_epochs=10, prob=0.0)
+    assert p1 == 0.0
+    assert 0.0 < p2 <= 0.5
 
 
-# def test_model_name_formatting():
-#     model = LForm_Model(n_obs_vars=4, n_hid_vars=5, s0_nature='random_', train_s0=True, init_range=(-0.2, 0.2))
-#     assert model.name.startswith("LFormModel_obs4_hid5_randInit-0.2to0.2")
-#     assert "_trainableS0" in model.name
+def test_ptf_model_gradient_flow():
+    # Define model
+    model = PTF_Model(n_obs_vars=4, n_hid_vars=8, s0_nature="random_", train_s0=True)
+    model.train()  # Enable training mode to activate dropout
 
+    # Define inputs
+    batch_size, seq_length = 3, 6
+    data_window = torch.randn(batch_size, seq_length, 4, requires_grad=False)
 
-def test_forward_and_backward_pass():
-    model = LForm_Model(
-        n_obs_vars=4,
-        n_hid_vars=6,
-        s0_nature='random_',
-        train_s0=True,
-        batch_size=2,
-        init_range=(-0.5, 0.5),
-        init_diag=0.7
-    )
-    data_window = torch.randn(model.batch_size, 6, model.n_obs_vars)
+    # Forward pass with dropout (teacher forcing active)
+    output = model(data_window=data_window, forecast_horizon=2, prob=0.1)
 
-    expectations, states, delta_terms, *_ = model(data_window)
+    # Define loss as MSE between predicted and true (teacher-forced) expectations
     loss_fn = MSELoss()
-    target = torch.zeros_like(expectations)
+    loss = loss_fn(output.expectations, data_window)
 
-    loss = loss_fn(expectations, target)
+    # Backpropagation
     loss.backward()
 
-    grads = [p.grad for p in model.parameters() if p.requires_grad]
-    assert any(g is not None for g in grads), "No gradients computed during backward pass"
+    # Assert gradients are flowing to initial hidden state
+    assert model.s0.grad is not None, "Gradients did not flow to the initial state s0"
+    assert not torch.all(model.s0.grad == 0), "Gradient to s0 is all zeros"
 
+    # Assert gradients are flowing to internal cell weights
+    assert model.cell.A.weight.grad is not None, "Gradients did not flow to A weights"
+    assert not torch.all(model.cell.A.weight.grad == 0), "Gradient to A weights is all zeros"
 
-def test_invalid_s0_nature_raises():
-    with pytest.raises(ValueError, match="s0_nature must be either 'zeros_' or 'random_'"):
-        _ = LForm_Model(4, 5, s0_nature='invalid_', train_s0=True)
+    print("Gradients successfully flow through the PTF_Model")
+# def test_checkpoint_saving_and_loading(tmp_path):
+#     model = PTF_Model(3, 6, "zeros_", train_s0=True)
+#     optimizer = optim.Adam(model.parameters(), lr=0.01)
+#     model.name = "temp_model"
+
+#     model.save_checkpoint(epoch=7, loss=0.123, optimizer=optimizer)
+#     path = f"checkpoints/{model.name}_epoch7.pth"
+#     assert os.path.exists(path)
+
+#     new_model = PTF_Model(3, 6, "zeros_", train_s0=True)
+#     new_optimizer = optim.Adam(new_model.parameters(), lr=0.01)
+#     epoch, loss = new_model.load_checkpoint(path, optimizer=new_optimizer)
+#     assert epoch == 7
+#     assert abs(loss - 0.123) < 1e-5

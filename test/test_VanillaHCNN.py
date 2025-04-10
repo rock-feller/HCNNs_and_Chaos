@@ -9,10 +9,11 @@ from collections import namedtuple
 
 
 # Named tuple for the output of the Vanilla HCNN model
-HCNNLFormForwardOutput = namedtuple(
-    "HCNNLFormForwardOutput",
+VanillaHCNNForwardOutput = namedtuple(
+    "VanillaHCNNForwardOutput", 
     ["expectations", "states", "delta_terms", "forecasts", "future_states"]
 )
+
 
 class CustomLinear(nn.Linear):
     """
@@ -1430,16 +1431,13 @@ class LargeSparse_cell(nn.Module):
 
 
 
-class LForm_Model(nn.Module):
+class Vanilla_Model(nn.Module):
     """
-    LSTM-Formulation HCNN Wrapper Model (HCNN-LForm).
+    Wrapper Model for the Vanilla HCNN Cell.
 
-    This model wraps the `lstm_cell`, a nonlinear HCNN cell that introduces memory-preserving 
-    behavior inspired by LSTM dynamics. It incorporates a residual-corrected state transition 
-    and a learnable diagonal matrix (`D`) for modulating long-term dependencies.
-
-    The model supports full teacher forcing for supervised sequence training and can forecast
-    future states in an auto-regressive fashion without additional supervision.
+    This model wraps the `vanilla_cell` to provide a batched, multi-step forward processing and
+    forecasting interface. It supports teacher forcing during training and auto-regressive
+    forecasting during inference.
 
     Parameters
     ----------
@@ -1484,12 +1482,10 @@ class LForm_Model(nn.Module):
     `init_range` : Tuple[float, float]
         Initialization range for random initialization.
 
-
     Indirect Attributes (initialized internally)
     --------------------------------------------
-
-    `cell` : lstm_cell
-        The core recurrent computation unit of the model..
+    `cell` : vanilla_cell
+        The core recurrent computation unit of the model.
 
     s0 : torch.nn.Parameter
         The initial hidden state tensor of shape (1, n_hid_vars).
@@ -1501,10 +1497,10 @@ class LForm_Model(nn.Module):
     `device` : torch.device
         Computation device (CUDA, MPS, or CPU) used by the model.
 
-
     Methods
     -------
-    forward(data_window: torch.Tensor, forecast_horizon: Optional[int] = None) -> HCNNLFormForwardOutput
+    forward(data_window: torch.Tensor,
+            forecast_horizon: Optional[int] = None ) -> VanillaHCNNForwardOutput
         Performs forward pass for the entire sequence, including optional future forecasting.
 
     initial_hidden_state() -> nn.Parameter:
@@ -1521,25 +1517,27 @@ class LForm_Model(nn.Module):
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
                  train_s0: bool, batch_size: int = 1,
-                 init_range: Tuple[float, float] = (-0.75, 0.75),
-                 init_diag: float = 1.0):
+                 init_range: Tuple[float, float] = (-0.75, 0.75)):
         
-        super(LForm_Model, self).__init__()
+        super(Vanilla_Model, self).__init__()
+
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
-
+        
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
 
         self.batch_size = batch_size
         self.init_range = init_range
-        self.init_diag = init_diag
 
-        self.cell = lstm_cell(n_obs_vars= self.n_obs_vars,n_hid_vars= self.n_hid_vars,
-                               init_range = self.init_range, init_diag=self.init_diag)
+        self.cell = vanilla_cell(n_obs_vars = n_obs_vars, 
+                                 n_hid_vars= n_hid_vars, 
+                                 init_range= init_range)
+        
         self.device = self.cell._get_default_device()
         self.name = self._generate_model_name()
+
 
 
         if self.s0_nature.lower() == "zeros_":
@@ -1550,12 +1548,13 @@ class LForm_Model(nn.Module):
         else:
             raise ValueError("s0_nature must be either 'zeros_' or 'random_'")
 
-        # Make `s0` a trainable parameter (single vector, not repeated for batch size)
+        # Make `h0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
     def _generate_model_name(self) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+
+        name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -1563,7 +1562,6 @@ class LForm_Model(nn.Module):
         if self.train_s0:
             name += "_trainableS0"
         return name
-
 
     def initial_hidden_state(self) -> nn.Parameter:
         """
@@ -1573,11 +1571,10 @@ class LForm_Model(nn.Module):
     
 
     def forward(self, data_window: torch.Tensor,
-                forecast_horizon: Optional[int] = None) -> HCNNLFormForwardOutput:
+                forecast_horizon: Optional[int] = None) -> VanillaHCNNForwardOutput:
         """
-        Executes a forward pass through the HCNNLForm model over a sequence of observations.
+        Executes a forward pass through the Vanilla HCNN model over a sequence of observations.
         Supports both teacher-forced training and optional auto-regressive forecasting.
-
 
         Parameters
         ----------
@@ -1592,14 +1589,14 @@ class LForm_Model(nn.Module):
 
         Returns
         -------
-        HCNNLFormForwardOutput
+        VanillaHCNNForwardOutput
             A namedtuple containing the following tensors:
 
-            - expectations : torch.Tensor
-                Predicted outputs for the observed sequence.
-                Shape: (batch_size, sequence_length, n_obs)
+            - `expectations` : torch.Tensor
+                Predicted observations for each time step in the input window.
+                Shape: (batch_size, sequence_length, n_obs_vars)
 
-            - states : torch.Tensor
+            - `states` : torch.Tensor
                 Hidden states for each time step in the input window.
                 Shape: (batch_size, sequence_length, n_hid_vars)
 
@@ -1619,9 +1616,10 @@ class LForm_Model(nn.Module):
 
         Notes
         -----
-        - The internal `lstm_cell` modulates memory with a diagonal transformation.
-        - The final state from the observed sequence is used to initialize future rollouts.
-        - Teacher forcing is applied for all observed inputs.
+        - During training, teacher forcing is used on the `data_window` to guide state updates.
+        - During forecasting, the last state from the input sequence is propagated without teacher forcing.
+        - The initial hidden state `s0` is shared across all sequences and may be learned or fixed depending
+          on `train_s0`.
         """
 
         batch_size, seq_length, _ = data_window.size()
@@ -1654,6 +1652,7 @@ class LForm_Model(nn.Module):
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
+
             expectations[:, seq_length - 1, :] = last_y_hat
             delta_terms[:, seq_length - 1, :] = last_delta_term
             # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
@@ -1662,10 +1661,24 @@ class LForm_Model(nn.Module):
             last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
-            
+
 
             expectations[:, seq_length - 1, :] = last_y_hat
             delta_terms[:, seq_length - 1, :] = last_delta_term
+        # Process observed data
+        # for t in range(seq_length - 1):
+        #     expectation, next_state, delta_term = self.cell(
+        #         state=states[:, t, :],
+        #         teacher_forcing=True,
+        #         observation=data_window[:, t, :]
+        #     )
+        #     expectations[:, t, :] = expectation
+        #     states[:, t + 1, :] = next_state
+        #     delta_terms[:, t, :] = delta_term
+
+        # # Final observed time step
+        # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+        # expectations[:, seq_length - 1, :] = last_y_hat
 
         # Initialize tensors for forecasts
         forecasts = None
@@ -1674,15 +1687,14 @@ class LForm_Model(nn.Module):
         if forecast_horizon:
             forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=self.device)
             future_states = torch.zeros(batch_size, forecast_horizon, self.n_state_vars, device=self.device)
-
             teach_forc = torch.matmul(last_delta_term,self.cell.ConMat)
-            r_state = states[:, seq_length - 1, :] - teach_forc
-            lstm_block = self.cell.A(torch.tanh(r_state)) - r_state
-            next_state = r_state + self.cell.D(lstm_block)
+
+            r_state = states[:, 0, :] - teach_forc
+            next_state = self.cell.A(torch.tanh(r_state))
 
             with torch.no_grad():
                 # Use the last observed state as the starting point
-                future_states[:, 0, :] = next_state# states[:, seq_length - 1, :]
+                future_states[:, 0, :] = states[:, seq_length - 1, :]
 
                 # Forecast future steps
                 for t in range(1, forecast_horizon):
@@ -1695,7 +1707,8 @@ class LForm_Model(nn.Module):
 
             forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
 
-        return expectations, states, delta_terms, forecasts, future_states
+        return VanillaHCNNForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms, forecasts=forecasts, future_states=future_states )
+
 
     def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
         """Saves model checkpoint."""
@@ -1708,7 +1721,6 @@ class LForm_Model(nn.Module):
             "loss": loss
         }, checkpoint_path)
         print(f"Checkpoint saved at {checkpoint_path}")
-
 
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
@@ -1725,115 +1737,84 @@ class LForm_Model(nn.Module):
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
 
 
+# Assuming Vanilla_Model and VanillaHCNNForwardOutput are imported correctly
 
-
-
-
-
-
-
-
-import torch
-import pytest
-from torch.nn import MSELoss
-
-
-
-# @pytest.fixture
-# def lform_model_fixture():
-#     return LForm_Model(
-#         n_obs_vars=4,
-#         n_hid_vars=6,
-#         s0_nature='random_',
-#         train_s0=True,
-#         batch_size=2,
-#         init_range=(-0.5, 0.5),
-#         init_diag=0.7
-#     )
-
-
-def test_forward_shapes_teacher_forcing():
-    model = LForm_Model(
-        n_obs_vars=4,
-        n_hid_vars=6,
-        s0_nature='random_',
-        train_s0=True,
-        batch_size=2,
-        init_range=(-0.5, 0.5),
-        init_diag=0.7
-    )
-
-    batch_size, seq_len, n_obs = model.batch_size, 10, model.n_obs_vars
-    data_window = torch.randn(batch_size, seq_len, n_obs)
-
-    expectations, states, delta_terms, forecasts, future_states = model(data_window)
-
-    assert expectations.shape == (batch_size, seq_len, n_obs)
-    assert delta_terms.shape == (batch_size, seq_len, n_obs)
-    assert states.shape == (batch_size, seq_len, model.n_state_vars)
-    assert forecasts is None
-    assert future_states is None
-
-
-def test_forecasting_output_shapes():
-    model = LForm_Model(
-        n_obs_vars=4,
-        n_hid_vars=6,
-        s0_nature='random_',
-        train_s0=True,
-        batch_size=2,
-        init_range=(-0.5, 0.5),
-        init_diag=0.7
-    )
-    batch_size, seq_len, n_obs, horizon = model.batch_size, 8, model.n_obs_vars, 5
-    data_window = torch.randn(batch_size, seq_len, n_obs)
-
-    expectations, states, delta_terms, forecasts, future_states = model(data_window, forecast_horizon=horizon)
-
-    assert forecasts.shape == (batch_size, horizon, n_obs)
-    assert future_states.shape == (batch_size, horizon, model.n_state_vars)
-
-
-def test_requires_grad_on_trainable_s0():
-    model = LForm_Model(n_obs_vars=4, n_hid_vars=5, s0_nature='random_', train_s0=True)
-    assert model.s0.requires_grad is True
-
-
-def test_s0_zero_initialization():
-    model = LForm_Model(n_obs_vars=4, n_hid_vars=5, s0_nature='zeros_', train_s0=False)
-    assert torch.all(model.s0 == 0)
+def test_model_initialization_zero():
+    """Test Vanilla_Model initialization with zero state vector."""
+    model = Vanilla_Model(n_obs_vars=5, n_hid_vars=10, s0_nature='zeros_', train_s0=False)
+    assert model.s0.shape == (1, 15)
+    assert torch.allclose(model.s0, torch.zeros_like(model.s0))
     assert model.s0.requires_grad is False
 
+def test_model_initialization_random():
+    """Test Vanilla_Model initialization with random state vector."""
+    model = Vanilla_Model(n_obs_vars=5, n_hid_vars=10, s0_nature='random_', train_s0=True)
+    low, high = model.init_range
+    assert (model.s0 >= low).all() and (model.s0 <= high).all()
+    assert model.s0.requires_grad is True
 
-# def test_model_name_formatting():
-#     model = LForm_Model(n_obs_vars=4, n_hid_vars=5, s0_nature='random_', train_s0=True, init_range=(-0.2, 0.2))
-#     assert model.name.startswith("LFormModel_obs4_hid5_randInit-0.2to0.2")
-#     assert "_trainableS0" in model.name
+def test_forward_pass_shape():
+    """Test output shapes of forward pass without forecasting."""
+    model = Vanilla_Model(n_obs_vars=3, n_hid_vars=7, s0_nature='zeros_', train_s0=True)
+    batch_size, seq_len = 2, 4
+    data = torch.randn(batch_size, seq_len, 3)
+    output = model(data)
 
+    assert output.expectations.shape == (batch_size, seq_len, 3)
+    assert output.states.shape == (batch_size, seq_len, 10)
+    assert output.delta_terms.shape == (batch_size, seq_len, 3)
+    assert output.forecasts is None
+    assert output.future_states is None
 
-def test_forward_and_backward_pass():
-    model = LForm_Model(
-        n_obs_vars=4,
-        n_hid_vars=6,
-        s0_nature='random_',
-        train_s0=True,
-        batch_size=2,
-        init_range=(-0.5, 0.5),
-        init_diag=0.7
-    )
-    data_window = torch.randn(model.batch_size, 6, model.n_obs_vars)
+def test_forward_with_forecasting():
+    """Test forward pass with forecast horizon."""
+    model = Vanilla_Model(n_obs_vars=4, n_hid_vars=6, s0_nature='random_', train_s0=True)
+    batch_size, seq_len, horizon = 3, 5, 2
+    data = torch.randn(batch_size, seq_len, 4)
+    output = model(data, forecast_horizon=horizon)
 
-    expectations, states, delta_terms, *_ = model(data_window)
-    loss_fn = MSELoss()
-    target = torch.zeros_like(expectations)
+    assert output.forecasts is not None
+    assert output.future_states is not None
+    assert output.forecasts.shape == (batch_size, horizon, 4)
+    assert output.future_states.shape == (batch_size, horizon, 10)
 
-    loss = loss_fn(expectations, target)
-    loss.backward()
-
-    grads = [p.grad for p in model.parameters() if p.requires_grad]
-    assert any(g is not None for g in grads), "No gradients computed during backward pass"
-
+def test_model_name_generation():
+    """Test automatic name generation for model configuration."""
+    model = Vanilla_Model(n_obs_vars=2, n_hid_vars=3, s0_nature='zeros_', train_s0=False)
+    assert "VanillaModel_obs2_hid3_zeroInit" in model.name
 
 def test_invalid_s0_nature_raises():
+    """Test that invalid s0_nature raises an exception."""
     with pytest.raises(ValueError, match="s0_nature must be either 'zeros_' or 'random_'"):
-        _ = LForm_Model(4, 5, s0_nature='invalid_', train_s0=True)
+        _ = Vanilla_Model(n_obs_vars=2, n_hid_vars=3, s0_nature='invalid', train_s0=True)
+
+def test_initial_hidden_state_reference():
+    """Test that the initial hidden state is returned correctly."""
+    model = Vanilla_Model(n_obs_vars=2, n_hid_vars=5, s0_nature='zeros_', train_s0=True)
+    assert torch.equal(model.initial_hidden_state(), model.s0)
+
+# def test_save_and_load_checkpoint(tmp_path):
+#     """Test saving and loading a model checkpoint."""
+#     model = Vanilla_Model(n_obs_vars=2, n_hid_vars=4, s0_nature='zeros_', train_s0=True)
+#     optimizer = Adam(model.parameters(), lr=0.01)
+
+#     dummy_loss = 1.23
+#     dummy_epoch = 5
+
+#     save_path = tmp_path / f"{model.name}_epoch{dummy_epoch}.pth"
+#     model.save_checkpoint(dummy_epoch, dummy_loss, optimizer)
+
+    # Simulate reloading model
+    # loaded_model = Vanilla_Model(n_obs_vars=2, n_hid_vars=4, s0_nature='zeros_', train_s0=True)
+    # loaded_epoch, loaded_loss = loaded_model.load_checkpoint(str(save_path), optimizer)
+
+    # assert loaded_epoch == dummy_epoch
+    # assert loaded_loss == dummy_loss
+
+def test_autoregressive_consistency():
+    """Check forecast prediction without gradient tracking."""
+    model = Vanilla_Model(n_obs_vars=3, n_hid_vars=6, s0_nature="zeros_", train_s0=False)
+    data = torch.randn(2, 3, 3)
+    output = model(data, forecast_horizon=2)
+    assert not output.forecasts.requires_grad, "Forecasts should not track gradients"
+    assert not output.future_states.requires_grad, "Future states should not track gradients"
