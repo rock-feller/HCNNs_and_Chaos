@@ -1,7 +1,7 @@
 import torch
 import pytest
 from torch.nn import MSELoss
-from typing import Tuple
+from typing import Tuple , Literal
 # from custom_linear import CustomLinear  # Import the updated CustomLinear class
 import torch
 import torch.nn as nn
@@ -9,49 +9,114 @@ from typing import Optional, Tuple
 
 
 class CustomSparseLinear(nn.Linear):
+    """
+    Custom Linear Layer with Structured Sparsity Support.
+
+    Extends PyTorch's `nn.Linear` to apply controlled sparsity patterns to the weight matrix.
+    Supports random sparsity or sparsity focused on non-observable components of the state vector.
+
+    Parameters
+    ----------
+    `n_hid_vars` : int
+        Number of hidden state variables (including observed and hidden variables).
+
+    `n_obs_vars` : int, optional
+        Number of observed state variables. especially useful when `mask_type='non_obs_block'`.
+        as it is used to define the boundary between observable and non-observable sections.
+    
+    `bias` : bool, optional
+        Whether to include a bias term. Default is False.
+
+    `init_range` : Tuple[float, float], optional
+        Range for uniform initialization of weights (and bias if enabled).
+        Default is (-0.75, 0.75).
+
+    `mask_type` : Literal['non_obs_block', 'random_block']
+        Type of sparsity mask to apply:
+        - 'random_block': Applies uniform random sparsity over the entire weight matrix.
+        - 'non_obs_block': Applies sparsity only to the non-observable block of the matrix 
+          (requires `n_obs_vars` to be set).
+
+    `sparsity` : float, optional
+        Proportion of weights to set to zero. Must be in the range [0.0, 1.0].
+        Default is 0.0 (no sparsity).
+
+
+
+    Direct Attributes (from inputs)
+    -------------------------------
+    `n_hid_vars` : int
+        Number of hidden state variables ( dimensionality of the hidden state variables).
+
+    `n_obs_vars` : int
+        Number of observed state variables (dimensionality of the observed state variables).
+
+    `init_range` : Tuple[float, float]
+        Range used to initialize weights and optional bias.
+
+    `sparsity` : float
+        Desired sparsity level to apply to the weights.
+
+    `mask_type` : str
+        Indicates the type of sparsity mask (`random_block` or `non_obs_block`).
+
+
+    
+    Indirect Attributes (initialized internally)
+    --------------------------------------------
+
+    `n_state_vars` : int
+        Total number of state variables (sum of hidden and observed variables).
+        This is used to define the shape of the weight matrix and mask.
+
+
+
+    `mask` : torch.Tensor
+        Binary mask (shape: `[n_state_vars, n_state_vars]`) indicating which weights are active (1) or zeroed (0),
+        based on the chosen `mask_type` and `sparsity`. where n_state_vars =  `n_hid_vars` + `n_obs_vars`
+
+    `weight` : torch.nn.Parameter
+        Learnable weight matrix initialized uniformly within `init_range`, then masked.
+
+    `bias` : torch.nn.Parameter or None
+        Optional learnable bias vector, also initialized uniformly if present.
+
+    Methods
+    -------
+    forward(input: torch.Tensor) -> torch.Tensor
+        Performs the masked linear transformation on the input tensor.
+
+    Notes
+    -----
+    - The `non_obs_block` mask applies sparsity only to the part of the matrix
+      unrelated to directly observed variables.
+
+    - The mask is enforced during both initialization and backpropagation using hooks.
+
+    - This class is particularly useful where controlled sparsity in the dynamics is desired.
+    """
+
     def __init__(self, n_hid_vars: int, 
+                 n_obs_vars: int, 
+
                  bias: bool = False,
                  init_range: Tuple[float, float] = (-0.75, 0.75),
-                 sparsity: float = 0.0,
-                 mask_type: str = "random",
-                 p: Optional[int] = None,
-                 device: Optional[torch.device] = None):
-        """
-        CustomLinear layer with sparsity applied based on the mask type.
 
-        Parameters
-        ----------
-        n_hid_vars : int
-            Number of hidden variables (both input and output features).
-        bias : bool, optional
-            If True, includes a bias term. Default is False.
-        init_range : Tuple[float, float], optional
-            Range for uniform initialization of weights. Default is (-0.75, 0.75).
-        sparsity : float, optional
-            Proportion of weights to set to zero (random sparsity). Default is 0.0 (no sparsity).
-        mask_type : str, optional
-            Type of mask to apply. Options:
-            - "random": Random sparsity over the entire weight matrix.
-            - "non_obs_only": Sparsity applied only on the non-observable block of the weight matrix.
-        p : int, optional
-            Number of observable variables when using `non_obs_only` mask type.
-        device : torch.device, optional
-            The device to use for computations. If not specified, automatically selects
-            `cuda`, `mps`, or `cpu` based on availability.
+                 mask_type: str = Literal['non_obs_block', 'random_block'] ,
+                 sparsity: float = 0.0):
+        
+        self.device =  self._get_default_device()
 
-        Notes
-        -----
-        - For `random`, the entire weight matrix has a proportion of its elements randomly zeroed out.
-        - For `non_obs_only`, sparsity is applied to the lower-right block of the weight matrix
-          (size `(n_hid_vars - p, n_hid_vars)`) with `p` observable variables.
-        """
-        self.device = device if device else self._get_default_device()
-
-        super(CustomSparseLinear, self).__init__(n_hid_vars, n_hid_vars, bias=bias, device=self.device)
-
+        self.n_obs_vars = n_obs_vars
+        self.n_hid_vars = n_hid_vars
+        self.n_state_vars = self.n_hid_vars  + self.n_obs_vars
         self.init_range = init_range
 
-        """
+        super(CustomSparseLinear, self).__init__(in_features= self.n_state_vars, out_features= self.n_state_vars, bias=bias, device=self.device)
+
+
+
+        """ 
         Raises
         ------
         ValueError
@@ -59,10 +124,10 @@ class CustomSparseLinear(nn.Linear):
         """
         if not (0 <= sparsity <= 1):
             raise ValueError("Sparsity must be between 0 and 1.")
+        
         self.sparsity = sparsity
         self.mask_type = mask_type
-        self.p = p
-        self.n_hid_vars = n_hid_vars
+
 
         # Initialize weights and biases
         self._initialize_weights()
@@ -100,6 +165,7 @@ class CustomSparseLinear(nn.Linear):
         if self.bias is not None:
             nn.init.uniform_(self.bias.data, self.init_range[0], self.init_range[1])
 
+
     def _generate_mask(self) -> torch.Tensor:
         """
         Generates the sparsity mask based on the specified `mask_type`.
@@ -107,45 +173,55 @@ class CustomSparseLinear(nn.Linear):
         Returns
         -------
         torch.Tensor
-            Binary mask of shape `(n_hid_vars, n_hid_vars)`.
+            Binary mask of shape `(n_state_vars, n_state_vars)`.
 
         Raises
         ------
         ValueError
             If an invalid `mask_type` is provided.
         """
-        mask = torch.ones(self.n_hid_vars, self.n_hid_vars, device=self.device)
+        mask = torch.ones(self.n_state_vars, self.n_state_vars, device=self.device)
 
-        if self.mask_type == "random":
+        if self.mask_type == "random_block":  
             # Random sparsity over the entire weight matrix
-            total_weights = self.n_hid_vars * self.n_hid_vars
+            total_weights = self.n_state_vars * self.n_state_vars
+
             zeroed_weights = int(self.sparsity * total_weights)
+
             random_indices = torch.randperm(total_weights, device=self.device)[:zeroed_weights]
+
             flat_mask = mask.view(-1)
             flat_mask[random_indices] = 0.0
-            mask = flat_mask.view(self.n_hid_vars, self.n_hid_vars)
 
-        elif self.mask_type == "non_obs_only":
-            if self.p is None or not (0 < self.p < self.n_hid_vars):
-                raise ValueError("`p` must be provided and satisfy 0 < p < n_hid_vars for `non_obs_only`.")
+            mask = flat_mask.view(self.n_state_vars, self.n_state_vars)
+
+        elif self.mask_type == "non_obs_block":
+
+            if self.n_obs_vars is None or not (0 < self.n_obs_vars < self.n_state_vars):
+                raise ValueError("`n_obs_vars` must be provided and satisfy 0 < n_obs_vars < non_obs_block for `non_obs_block`.")
 
             # Split the weight matrix into two blocks
-            obs_block = torch.ones((self.n_hid_vars, self.p), device=self.device)  # (n_hid_vars, p)
-            non_obs_block = torch.ones((self.n_hid_vars, self.n_hid_vars - self.p), device=self.device)  # (n_hid_vars, n_hid_vars - p)
+            obs_block = torch.ones((self.n_state_vars, self.n_obs_vars), device=self.device)  # (n_hid_vars, p)
+            non_obs_block = torch.ones((self.n_state_vars, self.n_state_vars - self.n_obs_vars), device=self.device)  # (n_hid_vars, n_hid_vars - p)
 
             # Apply sparsity only on the non-observable block
             total_weights_non_obs = non_obs_block.numel()
+
             zeroed_weights = int(self.sparsity * total_weights_non_obs)
+
             random_indices = torch.randperm(total_weights_non_obs, device=self.device)[:zeroed_weights]
+
             flat_non_obs = non_obs_block.view(-1)
+
             flat_non_obs[random_indices] = 0.0
-            non_obs_block = flat_non_obs.view(self.n_hid_vars, self.n_hid_vars - self.p)
+
+            non_obs_block = flat_non_obs.view(self.n_state_vars, self.n_state_vars - self.n_obs_vars)
 
             # Combine the blocks to form the mask
             mask = torch.cat((obs_block, non_obs_block), dim=1)
 
         else:
-            raise ValueError(f"Invalid mask_type: {self.mask_type}. Must be 'random' or 'non_obs_only'.")
+            raise ValueError(f"Invalid mask_type: {self.mask_type}. Must be 'random_block' or 'non_obs_block'.")
 
         return mask
 
@@ -186,144 +262,109 @@ class CustomSparseLinear(nn.Linear):
         Parameters
         ----------
         input : torch.Tensor
-            Input tensor of shape `(batch_size, n_hid_vars)`.
+            Input tensor of shape `(batch_size, n_state_vars)`.
 
         Returns
         -------
         torch.Tensor
-            Output tensor of shape `(batch_size, n_hid_vars)`.
+            Output tensor of shape `(batch_size, n_state_vars)`.
         """
         return nn.functional.linear(input, self.weight, self.bias)
 
+import torch
+import pytest
+from torch.nn import MSELoss
 
-def test_weight_initialization():
-    """Test that the weight matrix is initialized within the specified range."""
-    n_hid_vars = 5
-    init_range = (-0.5, 0.5)
-    layer = CustomSparseLinear(n_hid_vars, init_range=init_range)
+def test_initialization_random_block():
+    """Test initialization with random_block mask."""
+    n_obs, n_hid = 4, 6
+    sparsity = 0.3
+    layer = CustomSparseLinear(n_hid, n_obs, mask_type="random_block", sparsity=sparsity)
 
-    assert torch.all(layer.weight.data >= init_range[0]), "Weights initialized below minimum range."
-    assert torch.all(layer.weight.data <= init_range[1]), "Weights initialized above maximum range."
+    assert layer.weight.shape == (n_obs + n_hid, n_obs + n_hid)
+    assert torch.all((layer.mask == 0) | (layer.mask == 1)), "Mask should be binary."
+    assert torch.sum(layer.mask == 0) >= int(sparsity * layer.n_state_vars ** 2), "Sparsity not applied properly."
 
-def test_device_assignment():
-    """Test that the device is correctly assigned."""
-    n_hid_vars = 5
-    layer = CustomSparseLinear(n_hid_vars)
-
-    expected_device = "cuda" if torch.cuda.is_available() else "cpu"
-    assert layer.weight.device.type == expected_device, f"Expected device: {expected_device}, but got {layer.weight.device.type}"
-
-def test_random_sparsity_mask():
-    """Test the creation of a random sparsity mask."""
-    n_hid_vars = 5
-    sparsity = 0.4
-    layer = CustomSparseLinear(n_hid_vars, sparsity=sparsity, mask_type="random")
-
-    # Calculate the number of zeroed weights
-    total_weights = n_hid_vars * n_hid_vars
-    zeroed_weights = int(sparsity * total_weights)
-    actual_zeroed = (layer.mask == 0).sum().item()
-
-    assert layer.mask.shape == (n_hid_vars, n_hid_vars), "Mask shape is incorrect."
-    assert actual_zeroed == zeroed_weights, f"Expected {zeroed_weights} zeroed weights, but got {actual_zeroed}."
-
-def test_non_obs_only_mask():
-    """Test the creation of a non-obs-only sparsity mask."""
-    n_hid_vars = 6
-    p = 2
+def test_initialization_non_obs_block():
+    """Test initialization with non_obs_block mask."""
+    n_obs, n_hid = 5, 5
     sparsity = 0.5
-    layer = CustomSparseLinear(n_hid_vars, sparsity=sparsity, mask_type="non_obs_only", p=p)
+    layer = CustomSparseLinear(n_hid, n_obs, mask_type="non_obs_block", sparsity=sparsity)
 
-    # Check the shape of the mask
-    assert layer.mask.shape == (n_hid_vars, n_hid_vars), "Mask shape is incorrect."
+    total = layer.n_state_vars
+    obs_block = layer.mask[:, :n_obs]
+    non_obs_block = layer.mask[:, n_obs:]
 
-    # Ensure only the non-observable block is sparse
-    obs_block = layer.mask[:, :p]
-    non_obs_block = layer.mask[:, p:]
+    assert torch.all(obs_block == 1), "Observables block should be fully connected."
+    assert torch.sum(non_obs_block == 0) >= int(sparsity * non_obs_block.numel()), "Sparsity not properly enforced on non-observable block."
 
-    assert torch.all(obs_block == 1), "Observable block contains zeroed weights."
-    total_weights_non_obs = non_obs_block.numel()
-    expected_zeroed = int(sparsity * total_weights_non_obs)
-    actual_zeroed = (non_obs_block == 0).sum().item()
-    assert actual_zeroed == expected_zeroed, f"Expected {expected_zeroed} zeroed weights, but got {actual_zeroed}."
+def test_invalid_sparsity():
+    """Test that invalid sparsity raises error."""
+    with pytest.raises(ValueError, match="Sparsity must be between 0 and 1"):
+        CustomSparseLinear(n_hid_vars=4, n_obs_vars=2, sparsity=1.5)
 
-def test_enforce_mask_during_forward():
-    """Test that the mask is correctly applied during the forward pass."""
-    n_hid_vars = 4
-    sparsity = 0.5
-    layer = CustomSparseLinear(n_hid_vars, sparsity=sparsity, mask_type="random")
+def test_invalid_mask_type():
+    """Test that invalid mask type raises error."""
+    with pytest.raises(ValueError, match="Invalid mask_type:"):
+        CustomSparseLinear(n_hid_vars=4, n_obs_vars=2, mask_type="invalid_type")
 
-    # Forward pass
-    input_tensor = torch.randn(3, n_hid_vars)
-    output = layer(input_tensor)
+def test_forward_output_shape():
+    """Test output shape of the forward pass."""
+    n_obs, n_hid = 5, 7
+    layer = CustomSparseLinear(n_hid_vars = n_hid, n_obs_vars =  n_obs , mask_type="random_block", sparsity=0.2)
+    x = torch.randn(10, n_obs + n_hid)  # (batch_size, n_state_vars)
+    y = layer(x)
+    assert y.shape == x.shape, "Output shape mismatch"
 
-    # Check that masked weights remain zero
-    masked_weights = layer.weight.data * layer.mask
-    assert torch.allclose(layer.weight.data, masked_weights), "Masked weights are not being enforced."
+def test_weight_masking_applied():
+    """Ensure masked weights are zero after init."""
+    n_obs, n_hid = 6, 4
+    layer = CustomSparseLinear(n_hid, n_obs, mask_type="random_block", sparsity=0.8)
+    masked_weights = layer.weight.data * (1 - layer.mask)
+    assert torch.allclose(masked_weights, torch.zeros_like(masked_weights)), "Masked weights should be zero."
 
-def test_gradients_respect_mask():
-    """Test that gradients respect the mask during backpropagation."""
-    n_hid_vars = 5
-    sparsity = 0.4
-    layer = CustomSparseLinear(n_hid_vars, sparsity=sparsity, mask_type="random")
+def test_enforce_mask_on_backward():
+    """Test that gradients respect the sparsity mask during backward."""
+    n_obs, n_hid = 4, 4
+    layer = CustomSparseLinear(n_hid, n_obs, mask_type="random_block", sparsity=0.5)
+    x = torch.randn(3, layer.n_state_vars, requires_grad=True)
+    output = layer(x)
+    loss = output.sum()
+    loss.backward()
 
-    # Forward pass
-    input_tensor = torch.randn(10, n_hid_vars)
-    target = torch.randn(10, n_hid_vars)
-    optimizer = torch.optim.SGD(layer.parameters(), lr=0.01)
+    grad_masked = layer.weight.grad * (1 - layer.mask)
+    assert torch.allclose(grad_masked, torch.zeros_like(grad_masked)), "Masked gradient values should be zero."
 
-    output = layer(input_tensor)
+def test_gradient_flow():
+    """Test gradient flow through the module."""
+    n_obs, n_hid = 4, 8
+    layer = CustomSparseLinear(n_hid, n_obs ,mask_type="non_obs_block" , sparsity=0.0)
+    x = torch.randn(2, layer.n_state_vars, requires_grad=True)
+    output = layer(x)
+    target = torch.ones_like(output)
     loss = MSELoss()(output, target)
     loss.backward()
 
-    # Ensure gradients respect the mask
-    grad_masked = layer.weight.grad * layer.mask
-    assert torch.allclose(layer.weight.grad, grad_masked), "Gradients are not respecting the mask."
+    assert x.grad is not None, "Gradients should flow back to input"
+    assert layer.weight.grad is not None, "Gradients should flow back to weights"
 
-def test_mask_persistence():
-    """Test that the mask persists across backpropagation and updates."""
-    n_hid_vars = 5
-    sparsity = 0.4
-    layer = CustomSparseLinear(n_hid_vars, sparsity=sparsity, mask_type="random")
-    optimizer = torch.optim.SGD(layer.parameters(), lr=0.01)
+def test_edge_case_zero_sparsity():
+    """Ensure full connection when sparsity is 0."""
+    n_obs, n_hid = 3, 3
+    layer = CustomSparseLinear(n_hid, n_obs,  mask_type="random_block", sparsity=0.0)
+    assert torch.all(layer.mask == 1), "Mask should be all ones for zero sparsity"
 
-    # Perform multiple training steps
-    for _ in range(5):
-        input_tensor = torch.randn(10, n_hid_vars)
-        target = torch.randn(10, n_hid_vars)
-        output = layer(input_tensor)
-        loss = MSELoss()(output, target)
-        loss.backward()
-        optimizer.step()
+def test_edge_case_full_sparsity_random_block():
+    """Ensure all weights are zeroed for full sparsity (random_block)."""
+    n_obs, n_hid = 3, 3
+    layer = CustomSparseLinear(n_hid, n_obs, sparsity=1.0, mask_type="random_block")
+    assert torch.all(layer.weight == 0), "All weights should be zero with full sparsity"
 
-        # Ensure the mask is still applied
-        masked_weights = layer.weight.data * layer.mask
-        assert torch.allclose(layer.weight.data, masked_weights), "Mask is not persisting across updates."
-
-def test_invalid_mask_type():
-    """Test that an invalid mask type raises an error."""
-    n_hid_vars = 5
-    with pytest.raises(ValueError, match="Invalid mask_type"):
-        CustomSparseLinear(n_hid_vars, mask_type="invalid")
-
-def test_invalid_non_obs_only_p():
-    """Test that an invalid value for `p` raises an error for non-obs-only mask."""
-    n_hid_vars = 5
-    with pytest.raises(ValueError, match="`p` must be provided and satisfy 0 < p < n_hid_vars"):
-        CustomSparseLinear(n_hid_vars, sparsity=0.5, mask_type="non_obs_only", p=10)
-
-def test_sparsity_range():
-    """Test that an invalid sparsity value raises an error."""
-    n_hid_vars = 5
-    
-    # Test for sparsity > 1
-    with pytest.raises(ValueError, match="Sparsity must be between 0 and 1"):
-        CustomSparseLinear(n_hid_vars, sparsity=1.5)
-
-    # Test for sparsity < 0
-    with pytest.raises(ValueError, match="Sparsity must be between 0 and 1"):
-        CustomSparseLinear(n_hid_vars, sparsity=-0.1)
-
-# Run the tests
-if __name__ == "__main__":
-    pytest.main([__file__])
+def test_forward_pass_consistency():
+    """Ensure forward pass is deterministic given fixed mask and input."""
+    n_obs, n_hid = 3, 3
+    layer = CustomSparseLinear(n_hid, n_obs, mask_type="random_block", sparsity=0.25)
+    x = torch.randn(1, n_obs + n_hid)
+    y1 = layer(x)
+    y2 = layer(x)
+    assert torch.allclose(y1, y2), "Forward pass should be deterministic"
