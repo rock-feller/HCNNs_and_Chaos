@@ -138,6 +138,11 @@ class Vanilla_Model(nn.Module):
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
         self.init_range = init_range
+
+        self.s0_nature = s0_nature
+        self.train_s0 = train_s0
+        self.batch_size = batch_size
+
         if n_ext_vars is not None:
 
             self.n_ext_vars = n_ext_vars
@@ -145,17 +150,20 @@ class Vanilla_Model(nn.Module):
             self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
                                  n_hid_vars= self.n_hid_vars, 
                                  init_range= self.init_range, 
-                                 n_ext_vars=self.n_ext_vars)
+                                 n_ext_vars=n_ext_vars)
+            
+            self.name = self._generate_model_name(n_ext_vars=n_ext_vars)
 
         else:
+
+            self.n_ext_vars = None
             self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
                                  n_hid_vars= self.n_hid_vars, 
                                  init_range= self.init_range)
+            
+            self.name = self._generate_model_name()
         
-        self.s0_nature = s0_nature
-        self.train_s0 = train_s0
 
-        self.batch_size = batch_size
 
 
         # self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
@@ -163,7 +171,7 @@ class Vanilla_Model(nn.Module):
         #                          init_range= self.init_range)
         
         self.device = self.cell._get_default_device()
-        self.name = self._generate_model_name()
+        # self.name = self._generate_model_name()
 
 
 
@@ -178,13 +186,14 @@ class Vanilla_Model(nn.Module):
         # Make `s0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
-    def _generate_model_name(self , n_ext_vars: Optional[int]= None) -> str:
+    def _generate_model_name(self, n_ext_vars: Optional[int] =None) -> str:
         """Generates a unique model name based on configuration."""
 
         if n_ext_vars is not None:
-            name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+            name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{n_ext_vars}"
         else:
             name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -268,76 +277,79 @@ class Vanilla_Model(nn.Module):
         # Use the same initial hidden state for all sequences in the batch
         states[:, 0, :] = self.s0
 
+        if self.n_ext_vars is not None:
 
-      
-        if seq_length > 1:
 
-            # Process observed data
-            for t in range(seq_length - 1):
-                expectation, next_state, delta_term = self.cell(
-                    state=states[:, t, :],
-                    teacher_forcing=True,
-                    observation=data_window[:, t, :],
-                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None
-                )
-                expectations[:, t, :] = expectation
-                states[:, t + 1, :] = next_state
-                delta_terms[:, t, :] = delta_term
+            if seq_length > 1:
 
-            # Final observed time step
-            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-            # expectations[:, seq_length - 1, :] = last_y_hat
-            if ext_data_window is not None:
+                # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term = self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True,
+                        observation=data_window[:, t, :],
+                        externals=ext_data_window[:, t, :] )
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
+
+                # Final observed time step
+
+                # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+                # expectations[:, seq_length - 1, :] = last_y_hat
+                # if ext_data_window is not None:
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+                                            self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
             else:
 
-                                        
-                # Use external variables for the last time step
-                # 
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
-            
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
-            
+                                            
+                    # Use external variables for the last time step
+                    # 
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+                
+            # last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+            #     # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+                
 
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
+            # expectations[:, seq_length - 1, :] = last_y_hat
+            # delta_terms[:, seq_length - 1, :] = last_delta_term
             # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
         else:
 
-            if ext_data_window is not None:
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            if seq_length > 1:
+
+                # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term = self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True,
+                        observation=data_window[:, t, :] )
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
+
+                # Final observed time step
+
+                # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+                # expectations[:, seq_length - 1, :] = last_y_hat
+                # if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
             else:
 
-                                        
-                # Use external variables for the last time step
-                # 
+                                            
+                    # Use external variables for the last time step
+                    # 
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
-
-            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+                
+        last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+            
 
-
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
-        # Process observed data
-        # for t in range(seq_length - 1):
-        #     expectation, next_state, delta_term = self.cell(
-        #         state=states[:, t, :],
-        #         teacher_forcing=True,
-        #         observation=data_window[:, t, :]
-        #     )
-        #     expectations[:, t, :] = expectation
-        #     states[:, t + 1, :] = next_state
-        #     delta_terms[:, t, :] = delta_term
-
-        # # Final observed time step
-        # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-        # expectations[:, seq_length - 1, :] = last_y_hat
-
+        expectations[:, seq_length - 1, :] = last_y_hat
+        delta_terms[:, seq_length - 1, :] = last_delta_term
         # Initialize tensors for forecasts
         forecasts = None
         future_states = None
@@ -352,11 +364,13 @@ class Vanilla_Model(nn.Module):
 
             with torch.no_grad():
 
-                if ext_data_window is not None:
+                future_states[:, 0, :] = states[:, seq_length - 1, :]
+
+                if self.n_ext_vars is not None:
 
 
                 # Use the last observed state as the starting point
-                    future_states[:, 0, :] = states[:, seq_length - 1, :]
+                    
 
                     # Forecast future steps
                     for t in range(1, forecast_horizon):
@@ -371,7 +385,7 @@ class Vanilla_Model(nn.Module):
 
                 else:
 
-                    future_states[:, 0, :] = states[:, seq_length - 1, :]
+                    # future_states[:, 0, :] = states[:, seq_length - 1, :]
 
                     # Forecast future steps
                     for t in range(1, forecast_horizon):
@@ -550,6 +564,7 @@ class PTF_Model(nn.Module):
         self.init_range = init_range
         self.target_prob = target_prob
         self.drop_output =  drop_output
+
         if n_ext_vars is not None:
 
             self.n_ext_vars = n_ext_vars
@@ -559,16 +574,20 @@ class PTF_Model(nn.Module):
                                   n_hid_vars =self.n_hid_vars, 
                                 init_range = self.init_range,
                                 n_ext_vars=self.n_ext_vars)
-            
+
+            self.name = self._generate_model_name(n_ext_vars=n_ext_vars)
+  
         else:
+            self.n_ext_vars = None
             self.cell = ptf_cell(n_obs_vars = self.n_obs_vars, 
                                  n_hid_vars =self.n_hid_vars, 
                                 init_range = self.init_range)
                             
-        
-        self.device = self.cell._get_default_device()
-        self.name = self._generate_model_name()
+            self.name = self._generate_model_name()
 
+   
+        # self.name = self._generate_model_name()
+        self.device = self.cell._get_default_device()
 
 
         if self.s0_nature.lower() == "zeros_":
@@ -582,12 +601,12 @@ class PTF_Model(nn.Module):
         # Make `s0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
-    def _generate_model_name(self, n_ext_vars: Optional[int]= None) -> str:
+    def _generate_model_name(self , n_ext_vars: Optional[int] =None) -> str:
         """Generates a unique model name based on configuration."""
 
 
-        if n_ext_vars is not None:
-            name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+        if self.n_ext_vars is not None:
+            name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{n_ext_vars}"
         else:
             name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
@@ -720,65 +739,83 @@ class PTF_Model(nn.Module):
 
         # Use the same initial hidden state for all sequences in the batch
         states[:, 0, :] = self.s0
-        if seq_length > 1:
 
-        # Process observed data
-            for t in range(seq_length - 1):
-                expectation, next_state, delta_term , partial_delta_term= self.cell(
-                    state=states[:, t, :],
-                    teacher_forcing=True, prob=prob,
-                    observation=data_window[:, t, :],
-                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None
-                )
-                
-                expectations[:, t, :] = expectation
-                states[:, t + 1, :] = next_state
-                delta_terms[:, t, :] = delta_term
-                partial_delta_terms[:, t, :] = partial_delta_term
+
+
+        if self.n_ext_vars is not None:
+            
+
+
+            if seq_length > 1:
+
+            # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term , partial_delta_term= self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True, prob=prob,
+                        observation=data_window[:, t, :],
+                        externals=ext_data_window[:, t, :])
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
+                    partial_delta_terms[:, t, :] = partial_delta_term
 
             # Final observed time step
 
 
-            if ext_data_window is not None:
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
                                           self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
             else:
 
-                                        
-                # Use external variables for the last time step
-                # 
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+
             
-            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+            # last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
 
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
-            partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
-            
+            # expectations[:, seq_length - 1, :] = last_y_hat
+            # delta_terms[:, seq_length - 1, :] = last_delta_term
+            # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
+
         else:
-            
-            if ext_data_window is not None:
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
-            else:
 
-                                        
+            if seq_length > 1:
+                # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term , partial_delta_term= self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True, prob=prob,
+                        observation=data_window[:, t, :])
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
+                    partial_delta_terms[:, t, :] = partial_delta_term
+                                 
                 # Use external variables for the last time step
                 # 
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+            
 
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
-            # teach_forc = torch.matmul(last_partial_delta_term,self.cell.ConMat)
-            # r_state = states[:, 0, :] - teach_forc
-            # next_state = self.cell.A(torch.tanh(r_state))
+            else:
 
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
-            partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
+                # Use external variables for the last time step
+                # 
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            
+        last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+        last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+
+        expectations[:, seq_length - 1, :] = last_y_hat
+        delta_terms[:, seq_length - 1, :] = last_delta_term
+        partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
+            
+
 
         # Initialize tensors for forecasts
         forecasts = None
@@ -793,8 +830,12 @@ class PTF_Model(nn.Module):
             next_state = self.cell.A(torch.tanh(r_state))
 
             with torch.no_grad():
+
+                future_states[:, 0, :] = states[:, seq_length - 1, :]    
+
+
+                if self.n_ext_vars is not None:
                 # Use the last observed state as the starting point
-                if ext_data_window is not None:
 
 
                 # Use the last observed state as the starting point
@@ -802,20 +843,20 @@ class PTF_Model(nn.Module):
 
                     # Forecast future steps
                     for t in range(1, forecast_horizon):
+
                         forecast, next_state, _ , __= self.cell( state=future_states[:, t - 1, :],
                                                             teacher_forcing=False , 
                                                             externals = future_externals[:, t - 1, :] ,
                                                             prob = .0)
                         
-                    forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ), self.cell.ConMat.T)
 
-                
-                    forecasts[:, t - 1, :] = forecast
-                    future_states[:, t, :] = next_state
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
+                        
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ),
+                                self.cell.ConMat.T)
 
                 else:
-
-                    future_states[:, 0, :] = states[:, seq_length - 1, :]    
 
                     
                     for t in range(1, forecast_horizon):
@@ -826,7 +867,8 @@ class PTF_Model(nn.Module):
                         forecasts[:, t - 1, :] = forecast
                         future_states[:, t, :] = next_state
 
-                forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
 
         return HCNNpTFForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms,
                                     partial_delta_terms =partial_delta_terms, forecasts=forecasts, future_states=future_states )
@@ -988,13 +1030,17 @@ class LForm_Model(nn.Module):
                                init_range = self.init_range, init_diag=self.init_diag,
                                n_ext_vars = n_ext_vars)
             
+            self.name = self._generate_model_name(n_ext_vars=n_ext_vars)
+
+            
         else:
+            self.n_ext_vars = None
             self.cell = lstm_cell(n_obs_vars= self.n_obs_vars,n_hid_vars= self.n_hid_vars,
                                init_range = self.init_range, init_diag=self.init_diag
                                )
-            
+            self.name = self._generate_model_name()
         self.device = self.cell._get_default_device()
-        self.name = self._generate_model_name()
+
 
 
         if self.s0_nature.lower() == "zeros_":
@@ -1008,11 +1054,11 @@ class LForm_Model(nn.Module):
         # Make `s0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
-    def _generate_model_name(self, n_ext_vars: Optional[int]= None) -> str:
+    def _generate_model_name(self , n_ext_vars: Optional[int] =None) -> str:
         """Generates a unique model name based on configuration."""
 
-        if n_ext_vars is not None:
-            name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+        if self.n_ext_vars is not None:
+            name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{n_ext_vars}"
         
         else:
 
@@ -1101,52 +1147,80 @@ class LForm_Model(nn.Module):
 
         # Use the same initial hidden state for all sequences in the batch
         states[:, 0, :] = self.s0
-        if seq_length > 1:
 
-            # Process observed data
-            for t in range(seq_length - 1):
-                expectation, next_state, delta_term = self.cell(
-                    state=states[:, t, :],
-                    teacher_forcing=True,
-                    observation=data_window[:, t, :],
-                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None )
-                
-                expectations[:, t, :] = expectation
-                states[:, t + 1, :] = next_state
-                delta_terms[:, t, :] = delta_term
+        if self.n_ext_vars is not None:
 
-            # Final observed time step
-            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-            # expectations[:, seq_length - 1, :] = last_y_hat
-            if ext_data_window is not None:
+            if seq_length > 1:
+
+                # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term = self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True,
+                        observation=data_window[:, t, :],
+                        externals=ext_data_window[:, t, :] )
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
+
+                # Final observed time step
+                # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+                # expectations[:, seq_length - 1, :] = last_y_hat
+
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+                                        self.cell.B(ext_data_window[:,seq_length - 1, :]), 
+                                        self.cell.ConMat.T)
+                
+
+        
             else:
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
-            
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
+            # last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+                # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+                
+            # expectations[:, seq_length - 1, :] = last_y_hat
+            # delta_terms[:, seq_length - 1, :] = last_delta_term
             # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
         else:
 
 
+            if seq_length > 1:
 
-            if ext_data_window is not None:
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+                # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term = self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True,
+                        observation=data_window[:, t, :] )
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
+
+                # Final observed time step
+                # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+                # expectations[:, seq_length - 1, :] = last_y_hat
+
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , 
+                                        self.cell.ConMat.T)
+                
+
+        
             else:
-
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+
+
+
+            
+        last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
 
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
+        expectations[:, seq_length - 1, :] = last_y_hat
+        delta_terms[:, seq_length - 1, :] = last_delta_term
 
         # Initialize tensors for forecasts
         forecasts = None
@@ -1164,9 +1238,10 @@ class LForm_Model(nn.Module):
             with torch.no_grad():
 
                 future_states[:, 0, :] = next_state# states[:, seq_length - 1, :]
-                if ext_data_window is not None:
+                
+                if self.n_ext_vars is not None:
                     # Use the last observed state as the starting point
-                    future_states[:, 0, :] = states[:, seq_length - 1, :]
+                    # future_states[:, 0, :] = states[:, seq_length - 1, :]
 
                     # Forecast future steps
                     for t in range(1, forecast_horizon):
@@ -1174,10 +1249,13 @@ class LForm_Model(nn.Module):
                             state=future_states[:, t - 1, :],
                             teacher_forcing=False,
                             externals=future_externals[:, t - 1, :] )
+
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
                 # Use the last observed state as the starting point
             
             
-                    forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ), self.cell.ConMat.T)
 
                 else:
 
@@ -1374,19 +1452,21 @@ class LSpa_Model(nn.Module):
                                 mask_type = mask_type,
                                 n_ext_vars = self.n_ext_vars)
             
+            self.name = self._generate_model_name(n_ext_vars=n_ext_vars)
+            
         else:
             
-
+            self.n_ext_vars = None
             self.cell = LargeSparse_cell(n_obs_vars =self.n_obs_vars, 
                                         n_hid_vars = self.n_hid_vars,
                                         bias = self.bias,
                                         init_range = self.init_range, 
                                         sparsity_ratio=self.sparsity_ratio, 
                                         mask_type = mask_type)
-
+            self.name = self._generate_model_name()
         self.device = self.cell._get_default_device()
 
-        self.name = self._generate_model_name()
+
 
 
 
@@ -1402,11 +1482,11 @@ class LSpa_Model(nn.Module):
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
 
-    def _generate_model_name(self , n_ext_vars: Optional[int]= None) -> str:
+    def _generate_model_name(self , n_ext_vars: Optional[int] =None)  -> str:
         """Generates a unique model name based on configuration."""
 
-        if n_ext_vars is not None:
-            name = f"LSpaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+        if self.n_ext_vars is not None:
+            name = f"LSpaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{n_ext_vars}"
         
         else:
 
@@ -1492,26 +1572,30 @@ class LSpa_Model(nn.Module):
 
         # Use the same initial hidden state for all sequences in the batch
         states[:, 0, :] = self.s0
-        if seq_length > 1:
 
-            # Process observed data
-            for t in range(seq_length - 1):
-                expectation, next_state, delta_term = self.cell(
-                    state=states[:, t, :],
-                    teacher_forcing=True,
-                    observation=data_window[:, t, :],
-                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None
+        if self.n_ext_vars is not None:
 
-                )
-                expectations[:, t, :] = expectation
-                states[:, t + 1, :] = next_state
-                delta_terms[:, t, :] = delta_term
+
+            if seq_length > 1:
+
+                # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term = self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True,
+                        observation=data_window[:, t, :],
+                        externals=ext_data_window[:, t, :] )
+
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
 
             # Final observed time step
             # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             # expectations[:, seq_length - 1, :] = last_y_hat
 
-            if ext_data_window is not None:
+            # if ext_data_window is not None:
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
                                           self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
             else:
@@ -1521,28 +1605,41 @@ class LSpa_Model(nn.Module):
                 # 
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
             
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+            # last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+            # # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
 
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
+            # expectations[:, seq_length - 1, :] = last_y_hat
+            # delta_terms[:, seq_length - 1, :] = last_delta_term
             # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
         else:
+
+            if seq_length > 1:
+
+                # Process observed data
+                for t in range(seq_length - 1):
+                    expectation, next_state, delta_term = self.cell(
+                        state=states[:, t, :],
+                        teacher_forcing=True,
+                        observation=data_window[:, t, :] )
+
+                    
+                    expectations[:, t, :] = expectation
+                    states[:, t + 1, :] = next_state
+                    delta_terms[:, t, :] = delta_term
         
-            if ext_data_window is not None:
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            # if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
             else:
 
                 last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             
-            last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
+        last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
+        # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
 
 
-            expectations[:, seq_length - 1, :] = last_y_hat
-            delta_terms[:, seq_length - 1, :] = last_delta_term
+        expectations[:, seq_length - 1, :] = last_y_hat
+        delta_terms[:, seq_length - 1, :] = last_delta_term
         # Process observed data
         # for t in range(seq_length - 1):
         #     expectation, next_state, delta_term = self.cell(
@@ -1570,10 +1667,11 @@ class LSpa_Model(nn.Module):
             next_state = self.cell.Sparse_A(torch.tanh(r_state))
             with torch.no_grad():
 
-                if ext_data_window is not None:
+                # if ext_data_window is not None:
                 # Use the last observed state as the starting point
-                    future_states[:, 0, :] = next_state#states[:, seq_length - 1, :]
+                future_states[:, 0, :] = next_state#states[:, seq_length - 1, :]
 
+                if self.n_ext_vars is not None:
                 # Forecast future steps
                     for t in range(1, forecast_horizon):
                         forecast, next_state, _ = self.cell(
@@ -1585,10 +1683,11 @@ class LSpa_Model(nn.Module):
                         future_states[:, t, :] = next_state
 
                     forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ), self.cell.ConMat.T)
+            
                 else:
 
 
-                    future_states[:, 0, :] = states[:, seq_length - 1, :]    
+                    # future_states[:, 0, :] = states[:, seq_length - 1, :]    
 
                     
                     for t in range(1, forecast_horizon):
