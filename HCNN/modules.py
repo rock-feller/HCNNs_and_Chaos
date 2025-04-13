@@ -467,21 +467,25 @@ class vanilla_cell(nn.Module):
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
         self.init_range = init_range
-        if n_ext_vars is not None:
-            self.n_ext_vars = n_ext_vars
 
-            self.B = CustomLinear(in_vars = self.n_ext_vars, 
-                            out_vars =self.n_state_vars , 
-                            bias = False ,
-                            init_range = self.init_range )
-
-
-        # Parameter initialization 
-        
         self.A = CustomLinear(in_vars = self.n_state_vars, 
                             out_vars =self.n_state_vars , 
                             bias = False ,
                             init_range = self.init_range )
+
+        if n_ext_vars is not None:
+            self.n_ext_vars = n_ext_vars
+
+            self.B = CustomLinear(in_vars = n_ext_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
+        else:
+            self.n_ext_vars = None
+
+        # Parameter initialization 
+        
+
 
 
         self.register_buffer(name = 'ConMat', 
@@ -771,6 +775,12 @@ class ptf_cell(nn.Module):
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
         self.init_range = init_range
+
+        self.A = CustomLinear(in_vars = self.n_state_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
+        
         if n_ext_vars is not None:
             self.n_ext_vars = n_ext_vars
 
@@ -778,14 +788,9 @@ class ptf_cell(nn.Module):
                             out_vars =self.n_state_vars , 
                             bias = False ,
                             init_range = self.init_range )
+        else:
+            self.n_ext_vars = None
 
-
-        # Parameter initialization 
-        
-        self.A = CustomLinear(in_vars = self.n_state_vars, 
-                            out_vars =self.n_state_vars , 
-                            bias = False ,
-                            init_range = self.init_range )
 
 
         self.register_buffer(name = 'ConMat', 
@@ -1197,17 +1202,7 @@ class lstm_cell(nn.Module):
         self.init_diag =  init_diag
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
         self.init_range = init_range
-        if n_ext_vars is not None:
-            self.n_ext_vars = n_ext_vars
 
-            self.B = CustomLinear(in_vars = self.n_ext_vars, 
-                            out_vars =self.n_state_vars , 
-                            bias = False ,
-                            init_range = self.init_range )
-
-
-        # Parameter initialization 
-        
         self.A = CustomLinear(in_vars = self.n_state_vars, 
                             out_vars =self.n_state_vars , 
                             bias = False ,
@@ -1215,6 +1210,22 @@ class lstm_cell(nn.Module):
         
         self.D = DiagonalMatrix(n_state_vars = self.n_state_vars ,
                                   bias=False, init_diag=self.init_diag)
+        
+        if n_ext_vars is not None:
+            self.n_ext_vars = n_ext_vars
+
+            self.B = CustomLinear(in_vars = self.n_ext_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
+            
+        else:
+            self.n_ext_vars = None
+
+
+        # Parameter initialization 
+        
+
 
         self.register_buffer(name='ConMat', tensor=torch.eye(self.n_obs_vars, self.n_state_vars), persistent=False)
         self.register_buffer(name='Ide', tensor=torch.eye(self.n_state_vars), persistent=False)
@@ -1427,6 +1438,12 @@ class LargeSparse_cell(nn.Module):
         self.device = self._get_default_device()
         self.bias = bias
 
+        # Initialize sparse transformation
+        self.Sparse_A = CustomSparseLinear(n_hid_vars = self.n_hid_vars, n_obs_vars=self.n_obs_vars,
+                                            bias=self.bias, init_range=init_range,
+                                           sparsity=sparsity_ratio, mask_type=mask_type
+                                           )
+
         self.init_range = init_range
         if n_ext_vars is not None:
             self.n_ext_vars = n_ext_vars
@@ -1436,11 +1453,11 @@ class LargeSparse_cell(nn.Module):
                             bias = False ,
                             init_range = self.init_range )
             
-        # Initialize sparse transformation
-        self.Sparse_A = CustomSparseLinear(n_hid_vars = self.n_hid_vars, n_obs_vars=self.n_obs_vars,
-                                            bias=self.bias, init_range=init_range,
-                                           sparsity=sparsity_ratio, mask_type=mask_type
-                                           )
+        else:
+            self.n_ext_vars = None
+
+        
+
         
         self.register_buffer(name = 'ConMat', 
                             tensor= torch.eye(self.n_obs_vars, self.n_state_vars), 
