@@ -391,6 +391,9 @@ class vanilla_cell(nn.Module):
 
         `n_hid_vars` : int
             Number of hidden variables (i.e., the dimensionality of the hidden state variables).
+        
+        `n_ext_vars` : int, optional
+            Number of external variables (i.e., the dimensionality of the external variables).
 
         `init_range` : Tuple[float, float], optional
             Tuple specifying the range for uniform weight initialization in the `CustomLinear` module.
@@ -404,6 +407,9 @@ class vanilla_cell(nn.Module):
         `n_hid_vars` : int
             Stores the number of hidden variables as a class attribute.
 
+        `n_ext_vars` : int (optional)
+            Stores the number of external variables as a class attribute.
+
         `init_range` : Tuple[float, float]
             Stores the initialization range for the `CustomLinear` module.
 
@@ -416,6 +422,11 @@ class vanilla_cell(nn.Module):
         `A` : `CustomLinear`
             A linear transformation module that updates the hidden state.
             Configured with no bias and initialized using the provided `init_range`.
+
+        `B` : `CustomLinear`
+            A linear transformation module that maps external variables to the hidden state.
+            Configured with no bias and initialized using the provided `init_range`.
+
 
         `ConMat` : torch.Tensor
             A readout matrix that maps hidden states to observed outputs.
@@ -434,7 +445,8 @@ class vanilla_cell(nn.Module):
         Methods
         -------
         forward(state: torch.Tensor, teacher_forcing: bool,
-                observation: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor |None]
+                observation: Optional[torch.Tensor] = None, 
+                externals: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor |None]
             Performs a forward pass through the Vanilla HCNN Cell.
 
             Returns 
@@ -446,15 +458,24 @@ class vanilla_cell(nn.Module):
     """
 
     def __init__(self, n_obs_vars: int,  n_hid_vars: int , 
-            init_range: Tuple[float,float] = (-0.75,0.75)):
+            init_range: Tuple[float,float] = (-0.75,0.75) , 
+            n_ext_vars :Optional[int] = None):
 
     
         super(vanilla_cell, self).__init__()
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
-
         self.init_range = init_range
+        if n_ext_vars is not None:
+            self.n_ext_vars = n_ext_vars
+
+            self.B = CustomLinear(in_vars = self.n_ext_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
+
+
         # Parameter initialization 
         
         self.A = CustomLinear(in_vars = self.n_state_vars, 
@@ -495,7 +516,8 @@ class vanilla_cell(nn.Module):
 
 
     def forward(self, state: torch.Tensor, teacher_forcing: bool=False,
-                observation: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+                observation: Optional[torch.Tensor] = None, 
+                externals: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         r'''
         Forward pass of the Vanilla HCNN Cell.
 
@@ -516,6 +538,10 @@ class vanilla_cell(nn.Module):
 
             The ground-truth observation tensor (`y_true`) corresponds to the observable at time t. Required when 
             `teacher_forcing` is True. Ignored otherwise.
+
+        `externals` : Optional[torch.Tensor], default=None | shape=(`n_ext_vars`,)
+            The external input tensor (`$\mathbf{x}_{t}$`) corresponds to the external variables at time t. Required when 
+            `n_ext_vars` is not None. Ignored otherwise.
 
         Returns
         -------
@@ -547,7 +573,14 @@ class vanilla_cell(nn.Module):
     # Compute the expected output (y_hat)
         # expectation = torch.matmul(self.ConMat, state)
 
-        expectation = torch.matmul(state , self.ConMat.T)
+        
+        if self.n_ext_vars is not None:
+
+            expectation = torch.matmul(state + self.B(externals), self.ConMat.T) 
+        
+        else:
+
+            expectation = torch.matmul(state , self.ConMat.T) 
 
         # print("expectation requires_grad:", expectation.requires_grad)
         if teacher_forcing:
@@ -657,6 +690,10 @@ class ptf_cell(nn.Module):
 
     `n_hid_vars` : int
         Number of hidden variables (i.e., the dimensionality of the hidden state variables).
+    
+    `n_ext_vars` : int, optional
+        Number of external variables (i.e., the dimensionality of the external variables).
+
 
     `init_range` : Tuple[float, float], optional
         Tuple specifying the range for uniform weight initialization in the `CustomLinear` module.
@@ -671,6 +708,9 @@ class ptf_cell(nn.Module):
     `n_hid_vars` : int
         Stores the number of hidden variables as a class attribute.
 
+    `n_ext_vars` : int (optional)
+        Stores the number of external variables as a class attribute.
+
     `init_range` : Tuple[float, float]
         Stores the initialization range for the `CustomLinear` module.
 
@@ -683,6 +723,10 @@ class ptf_cell(nn.Module):
         
     `A` : CustomLinear
         A linear transformation module that updates the hidden state.
+        Configured with no bias and initialized using the provided `init_range`.
+
+    `B` : CustomLinear
+        A linear transformation module that maps external variables to the hidden state.
         Configured with no bias and initialized using the provided `init_range`.
 
     `ConMat` : torch.Tensor
@@ -706,7 +750,8 @@ class ptf_cell(nn.Module):
     Methods
     -------
     forward(state: torch.Tensor, teacher_forcing: bool, prob: Optional[float] = None,
-           observation: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+           observation: Optional[torch.Tensor] = None,
+           externals: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         Performs a forward pass through the Partial Teacher Forcing HCNN Cell.
 
         Returns 
@@ -717,14 +762,24 @@ class ptf_cell(nn.Module):
         - the partial delta term which is the difference between the expectation and the observation after applying dropout.
     """
 
-    def __init__(self, n_obs_vars: int, n_hid_vars: int, init_range: Tuple[float, float] = (-0.75, 0.75)):
+    def __init__(self, n_obs_vars: int, n_hid_vars: int, 
+                 init_range: Tuple[float, float] = (-0.75, 0.75)
+                 , n_ext_vars :Optional[int] = None):
 
         super(ptf_cell, self).__init__()
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
-
         self.init_range = init_range
+        if n_ext_vars is not None:
+            self.n_ext_vars = n_ext_vars
+
+            self.B = CustomLinear(in_vars = self.n_ext_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
+
+
         # Parameter initialization 
         
         self.A = CustomLinear(in_vars = self.n_state_vars, 
@@ -736,7 +791,6 @@ class ptf_cell(nn.Module):
         self.register_buffer(name = 'ConMat', 
                             tensor= torch.eye(self.n_obs_vars, self.n_state_vars), 
                             persistent = False)
-        
 
         self.register_buffer(name = 'Ide', 
                             tensor= torch.eye(self.n_state_vars ),
@@ -774,7 +828,8 @@ class ptf_cell(nn.Module):
         return partial_teacher_forcing(p=prob)
 
     def forward(self, state: torch.Tensor, teacher_forcing: bool=False, prob: Optional[float] = 0.,
-                observation: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+                observation: Optional[torch.Tensor] = None ,
+                externals: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         # Compute expected output (y_hat)
         r"""
         Forward pass of the Partial Teacher Forcing HCNN Cell.
@@ -800,6 +855,9 @@ class ptf_cell(nn.Module):
             The ground-truth observation tensor (`y_true`) corresponds to the observable at time t. Required when 
             `teacher_forcing` is True. Ignored otherwise.
 
+        `externals` : Optional[torch.Tensor], default=None | shape=(`n_ext_vars`,)
+            The external input tensor (`$\mathbf{x}_{t}$`) corresponds to the external variables at time t. Required when 
+            `n_ext_vars` is not None. Ignored otherwise.
 
 
          Returns
@@ -832,7 +890,13 @@ class ptf_cell(nn.Module):
         being used to compute the next state.
         - Without teacher forcing, the next state is computed purely from the model's expectations.
         """
-        expectation = torch.matmul(state , self.ConMat.T)
+        if self.n_ext_vars is not None:
+
+            expectation = torch.matmul(state + self.B(externals), self.ConMat.T) 
+        
+        else:
+
+            expectation = torch.matmul(state , self.ConMat.T) 
 
         if teacher_forcing:
             if observation is None:
@@ -1041,6 +1105,9 @@ class lstm_cell(nn.Module):
     n_hid_vars : int
         Number of hidden variables (i.e., the internal state dimensionality).
 
+    `n_ext_vars` : int, optional
+        Number of external variables (i.e., the dimensionality of the external variables).
+
     init_range : Tuple[float, float], optional
         Range for uniform initialization of the `CustomLinear` weight matrix. Default is (-0.75, 0.75).
 
@@ -1052,6 +1119,11 @@ class lstm_cell(nn.Module):
     n_hid_vars : int
         Stores the number of hidden variables as a class attribute.
 
+    `n_ext_vars` : int (optional)
+                Stores the number of external variables as a class attribute.
+
+        
+    
     init_range : Tuple[float, float]
         Initialization range used for weights in the `CustomLinear` layer.
 
@@ -1060,6 +1132,10 @@ class lstm_cell(nn.Module):
 
     `A` : CustomLinear
         A linear transformation module that updates the hidden state.
+        Configured with no bias and initialized using the provided `init_range`.
+    
+    `B` : `CustomLinear`
+        A linear transformation module that maps external variables to the hidden state.
         Configured with no bias and initialized using the provided `init_range`.
 
     `ConMat` : torch.Tensor
@@ -1112,20 +1188,30 @@ class lstm_cell(nn.Module):
 
     def __init__(self, n_obs_vars: int, n_hid_vars: int, 
                  init_range: Tuple[float, float] = (-0.75, 0.75),
-                 init_diag: float = 1.0):
-        
+                 init_diag: float = 1.0 ,
+                n_ext_vars :Optional[int] = None):        
         super(lstm_cell, self).__init__()
 
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
         self.init_diag =  init_diag
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
+        self.init_range = init_range
+        if n_ext_vars is not None:
+            self.n_ext_vars = n_ext_vars
 
-        # Initialize layers
-        self.A = CustomLinear( in_vars = self.n_state_vars ,
-                              out_vars= self.n_state_vars ,
-                                bias=False, 
-                                init_range=init_range)
+            self.B = CustomLinear(in_vars = self.n_ext_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
+
+
+        # Parameter initialization 
+        
+        self.A = CustomLinear(in_vars = self.n_state_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
         
         self.D = DiagonalMatrix(n_state_vars = self.n_state_vars ,
                                   bias=False, init_diag=self.init_diag)
@@ -1146,7 +1232,8 @@ class lstm_cell(nn.Module):
             return torch.device("cpu")
 
     def forward(self, state: torch.Tensor, teacher_forcing: bool,
-                observation: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+                observation: Optional[torch.Tensor] = None,
+                externals: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         
         r'''
         Forward pass of the Vanilla HCNN Cell.
@@ -1168,6 +1255,10 @@ class lstm_cell(nn.Module):
 
             The ground-truth observation tensor (`y_true`) corresponds to the observable at time t. Required when 
             `teacher_forcing` is True. Ignored otherwise.
+
+        `externals` : Optional[torch.Tensor], default=None | shape=(`n_ext_vars`,)
+            The external input tensor (`$\mathbf{x}_{t}$`) corresponds to the external variables at time t. Required when 
+            `n_ext_vars` is not None. Ignored otherwise.
 
         Returns
         -------
@@ -1199,7 +1290,13 @@ class lstm_cell(nn.Module):
 
         
         # Compute expected output (y_hat)
-        expectation = torch.matmul(state , self.ConMat.T)
+        if self.n_ext_vars is not None:
+
+            expectation = torch.matmul(state + self.B(externals), self.ConMat.T) 
+        
+        else:
+
+            expectation = torch.matmul(state , self.ConMat.T) 
 
         if teacher_forcing:
             
@@ -1251,6 +1348,10 @@ class LargeSparse_cell(nn.Module):
         Number of observed state variables. especially useful when `mask_type='non_obs_block'`.
         as it is used to define the boundary between observable and non-observable sections.
     
+        
+    `n_ext_vars` : int, optional
+        Number of external variables (i.e., the dimensionality of the external variables).
+
     `init_range` : Tuple[float, float]
         Range used to initialize weights and optional bias.
 
@@ -1274,6 +1375,12 @@ class LargeSparse_cell(nn.Module):
     `Sparse_A`: `CustomSparseLinear`
         A Custom Linear Layer with Structured Sparsity Support.
 
+    `B` : `CustomLinear`
+        A linear transformation module that maps external variables to the hidden state.
+        Configured with no bias and initialized using the provided `init_range`.
+     
+
+    
     `ConMat` : torch.Tensor
         A readout matrix that maps hidden states to observed outputs.
         Initialized as horizontal concatenation of an identity matrix of shape (`n_obs_var`, `n_obs_var`).
@@ -1304,8 +1411,11 @@ class LargeSparse_cell(nn.Module):
     """
 
 
-    def __init__(self, n_obs_vars: int, n_hid_vars: int, bias: bool = False, init_range: Tuple[float, float] = (-0.75, 0.75),
-                 mask_type: str = "random_block", sparsity_ratio: float = 0.0 ):
+    def __init__(self, n_obs_vars: int, n_hid_vars: int, bias: bool = False,
+                  init_range: Tuple[float, float] = (-0.75, 0.75),
+                 mask_type: str = "random_block",
+                   sparsity_ratio: float = 0.0 ,
+                   n_ext_vars :Optional[int] = None):
     
 
 
@@ -1316,6 +1426,16 @@ class LargeSparse_cell(nn.Module):
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
         self.device = self._get_default_device()
         self.bias = bias
+
+        self.init_range = init_range
+        if n_ext_vars is not None:
+            self.n_ext_vars = n_ext_vars
+
+            self.B = CustomLinear(in_vars = self.n_ext_vars, 
+                            out_vars =self.n_state_vars , 
+                            bias = False ,
+                            init_range = self.init_range )
+            
         # Initialize sparse transformation
         self.Sparse_A = CustomSparseLinear(n_hid_vars = self.n_hid_vars, n_obs_vars=self.n_obs_vars,
                                             bias=self.bias, init_range=init_range,
@@ -1340,7 +1460,8 @@ class LargeSparse_cell(nn.Module):
             return torch.device("cpu")
 
     def forward(self, state: torch.Tensor, teacher_forcing: bool,
-                observation: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+                observation: Optional[torch.Tensor] = None,
+                externals: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         
         r'''
         Forward pass of the Vanilla HCNN Cell.
@@ -1391,7 +1512,13 @@ class LargeSparse_cell(nn.Module):
         internal computation.
         '''
         # Compute expected output (y_hat)
-        expectation = torch.matmul(state , self.ConMat.T)
+        if self.n_ext_vars is not None:
+
+            expectation = torch.matmul(state + self.B(externals), self.ConMat.T) 
+        
+        else:
+
+            expectation = torch.matmul(state , self.ConMat.T) 
 
         if teacher_forcing:
 
