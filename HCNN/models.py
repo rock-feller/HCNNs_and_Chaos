@@ -4,7 +4,7 @@ from torch import nn
 from typing import Literal, Tuple, Optional
 from torch.utils.tensorboard import SummaryWriter
 
-from .modules import vanilla_cell , ptf_cell, lstm_cell, LargeSparse_cell
+from .modules import vanilla_cell , ptf_cell, lstm_cell, LargeSparse_cell, CustomLinear
 
 
 from collections import namedtuple
@@ -53,6 +53,9 @@ class Vanilla_Model(nn.Module):
     `n_hid_vars` : int
         Number of hidden (latent) variables in the state.
 
+    `n_ext_vars` : int
+        Number of external variables (optional). 
+
     `s0_nature` : Literal['zeros_', 'random_']
         Strategy for initializing the initial hidden state `s0`.
         - 'zeros_': Initialize as a zero vector.
@@ -75,6 +78,9 @@ class Vanilla_Model(nn.Module):
 
     `n_hid_vars` : int
         Number of hidden variables.
+    
+    `n_ext_vars` : int
+        Number of external variables (optional). 
 
     `s0_nature` : str
         Initial state setup strategy ('zeros_' or 'random_').
@@ -123,23 +129,38 @@ class Vanilla_Model(nn.Module):
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
                  train_s0: bool, batch_size: int = 1,
-                 init_range: Tuple[float, float] = (-0.75, 0.75)):
+                 init_range: Tuple[float, float] = (-0.75, 0.75), 
+                 n_ext_vars : Optional[int] = None):
         
         super(Vanilla_Model, self).__init__()
 
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = self.n_hid_vars + self.n_obs_vars
+        self.init_range = init_range
+        if n_ext_vars is not None:
+
+            self.n_ext_vars = n_ext_vars
+
+            self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
+                                 n_hid_vars= self.n_hid_vars, 
+                                 init_range= self.init_range, 
+                                 n_ext_vars=self.n_ext_vars)
+
+        else:
+            self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
+                                 n_hid_vars= self.n_hid_vars, 
+                                 init_range= self.init_range)
         
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
 
         self.batch_size = batch_size
-        self.init_range = init_range
 
-        self.cell = vanilla_cell(n_obs_vars = n_obs_vars, 
-                                 n_hid_vars= n_hid_vars, 
-                                 init_range= init_range)
+
+        # self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
+        #                          n_hid_vars= self.n_hid_vars, 
+        #                          init_range= self.init_range)
         
         self.device = self.cell._get_default_device()
         self.name = self._generate_model_name()
@@ -157,10 +178,13 @@ class Vanilla_Model(nn.Module):
         # Make `s0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
-    def _generate_model_name(self) -> str:
+    def _generate_model_name(self , n_ext_vars: Optional[int]= None) -> str:
         """Generates a unique model name based on configuration."""
 
-        name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+        if n_ext_vars is not None:
+            name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+        else:
+            name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -177,7 +201,9 @@ class Vanilla_Model(nn.Module):
     
 
     def forward(self, data_window: torch.Tensor,
-                forecast_horizon: Optional[int] = None) -> VanillaHCNNForwardOutput:
+                ext_data_window: Optional[torch.Tensor]=None ,
+                forecast_horizon: Optional[int] = None , 
+                future_externals: Optional[torch.Tensor]=None ) -> VanillaHCNNForwardOutput:
         """
         Executes a forward pass through the Vanilla HCNN model over a sequence of observations.
         Supports both teacher-forced training and optional auto-regressive forecasting.
@@ -185,13 +211,17 @@ class Vanilla_Model(nn.Module):
         Parameters
         ----------
         `data_window` : torch.Tensor
-            Observed input sequence of shape (batch_size, sequence_length, n_obs_vars).
+            Observed input sequence of shape (`batch_size`, `sequence_length`, `n_obs_vars`).
             Represents a batch of multivariate time series.
 
         `forecast_horizon` : Optional[int], default=None
             Number of future steps to forecast beyond the observed `data_window`.
             If None, no forecasting is performed. If specified, the model enters
             auto-regressive prediction mode for `forecast_horizon` steps.
+        
+        `ext_data_window` : torch.Tensor
+            External variables sequence of shape (`batch_size`, `sequence_length`, `n_ext_vars`).
+            Represents a batch of multivariate time series accounting for the external variables.
 
         Returns
         -------
@@ -237,6 +267,9 @@ class Vanilla_Model(nn.Module):
 
         # Use the same initial hidden state for all sequences in the batch
         states[:, 0, :] = self.s0
+
+
+      
         if seq_length > 1:
 
             # Process observed data
@@ -244,7 +277,8 @@ class Vanilla_Model(nn.Module):
                 expectation, next_state, delta_term = self.cell(
                     state=states[:, t, :],
                     teacher_forcing=True,
-                    observation=data_window[:, t, :]
+                    observation=data_window[:, t, :],
+                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None
                 )
                 expectations[:, t, :] = expectation
                 states[:, t + 1, :] = next_state
@@ -253,8 +287,16 @@ class Vanilla_Model(nn.Module):
             # Final observed time step
             # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             # expectations[:, seq_length - 1, :] = last_y_hat
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
 
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+                                        
+                # Use external variables for the last time step
+                # 
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+            
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
@@ -264,7 +306,17 @@ class Vanilla_Model(nn.Module):
             # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
         else:
 
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
+
+                                        
+                # Use external variables for the last time step
+                # 
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+
+            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
 
@@ -299,19 +351,39 @@ class Vanilla_Model(nn.Module):
             next_state = self.cell.A(torch.tanh(r_state))
 
             with torch.no_grad():
+
+                if ext_data_window is not None:
+
+
                 # Use the last observed state as the starting point
-                future_states[:, 0, :] = states[:, seq_length - 1, :]
+                    future_states[:, 0, :] = states[:, seq_length - 1, :]
 
-                # Forecast future steps
-                for t in range(1, forecast_horizon):
-                    forecast, next_state, _ = self.cell(
-                        state=future_states[:, t - 1, :],
-                        teacher_forcing=False
-                    )
-                    forecasts[:, t - 1, :] = forecast
-                    future_states[:, t, :] = next_state
+                    # Forecast future steps
+                    for t in range(1, forecast_horizon):
+                        forecast, next_state, _ = self.cell( state=future_states[:, t - 1, :],
+                                                            teacher_forcing=False , 
+                                                            externals = future_externals[:, t - 1, :] )
+                        
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
 
-            forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ), self.cell.ConMat.T)
+
+                else:
+
+                    future_states[:, 0, :] = states[:, seq_length - 1, :]
+
+                    # Forecast future steps
+                    for t in range(1, forecast_horizon):
+                        
+                        forecast, next_state, _ = self.cell( state=future_states[:, t - 1, :],
+                                                            teacher_forcing=False )
+                        
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
+
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+                    
 
         return VanillaHCNNForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms, forecasts=forecasts, future_states=future_states )
 
@@ -365,6 +437,9 @@ class PTF_Model(nn.Module):
     n_hid_vars : int
         Number of hidden (latent) variables in the state.
 
+    `n_ext_vars` : int
+        Number of external variables (optional). 
+
     s0_nature : Literal['zeros_', 'random_']
         Strategy for initializing the initial hidden state `s0`:
         - 'zeros_': All-zero initialization.
@@ -395,6 +470,9 @@ class PTF_Model(nn.Module):
 
     n_hid_vars : int
         Number of hidden variables.
+    
+    `n_ext_vars` : int
+        Number of external variables (optional). 
 
     s0_nature : str
         Initial hidden state strategy.
@@ -457,7 +535,8 @@ class PTF_Model(nn.Module):
                  train_s0: bool, batch_size: int = 1,
                  init_range: Tuple[float, float] = (-0.75, 0.75), 
                  target_prob: float = 0.25 ,
-                 drop_output:bool = False):
+                 drop_output:bool = False,
+                n_ext_vars : Optional[int] = None):
         
         super(PTF_Model, self).__init__()
         self.n_obs_vars = n_obs_vars
@@ -471,10 +550,21 @@ class PTF_Model(nn.Module):
         self.init_range = init_range
         self.target_prob = target_prob
         self.drop_output =  drop_output
+        if n_ext_vars is not None:
+
+            self.n_ext_vars = n_ext_vars
 
 
-        self.cell = ptf_cell(n_obs_vars = self.n_obs_vars, n_hid_vars =self.n_hid_vars, 
-                             init_range = self.init_range)
+            self.cell = ptf_cell(n_obs_vars = self.n_obs_vars,
+                                  n_hid_vars =self.n_hid_vars, 
+                                init_range = self.init_range,
+                                n_ext_vars=self.n_ext_vars)
+            
+        else:
+            self.cell = ptf_cell(n_obs_vars = self.n_obs_vars, 
+                                 n_hid_vars =self.n_hid_vars, 
+                                init_range = self.init_range)
+                            
         
         self.device = self.cell._get_default_device()
         self.name = self._generate_model_name()
@@ -492,9 +582,14 @@ class PTF_Model(nn.Module):
         # Make `s0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
-    def _generate_model_name(self) -> str:
+    def _generate_model_name(self, n_ext_vars: Optional[int]= None) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+
+
+        if n_ext_vars is not None:
+            name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+        else:
+            name = f"PTFModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -552,8 +647,10 @@ class PTF_Model(nn.Module):
 
 
     def forward(self, data_window: torch.Tensor,
-                forecast_horizon: Optional[int] = None,
-                prob: float = 0.0) -> HCNNpTFForwardOutput:
+                prob: float = 0.0,
+                ext_data_window: Optional[torch.Tensor]=None ,
+                forecast_horizon: Optional[int] = None , 
+                future_externals: Optional[torch.Tensor]=None ) -> HCNNpTFForwardOutput:
         """
         Executes a forward pass through the Partial Teacher Forcing HCNN model (HCNN-pTF).
         Supports dynamic control over the amount of teacher forcing via dropout scaling,
@@ -568,6 +665,10 @@ class PTF_Model(nn.Module):
         forecast_horizon : Optional[int], default=None
             If specified, the model forecasts this number of future time steps beyond the
             provided `data_window` using auto-regressive unrolling.
+
+        `ext_data_window` : torch.Tensor
+            External variables sequence of shape (`batch_size`, `sequence_length`, `n_ext_vars`).
+            Represents a batch of multivariate time series accounting for the external variables.
 
         prob : float, default=0.0
             Dropout probability used in partial teacher forcing. A higher value corresponds
@@ -626,15 +727,29 @@ class PTF_Model(nn.Module):
                 expectation, next_state, delta_term , partial_delta_term= self.cell(
                     state=states[:, t, :],
                     teacher_forcing=True, prob=prob,
-                    observation=data_window[:, t, :]
+                    observation=data_window[:, t, :],
+                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None
                 )
+                
                 expectations[:, t, :] = expectation
                 states[:, t + 1, :] = next_state
                 delta_terms[:, t, :] = delta_term
                 partial_delta_terms[:, t, :] = partial_delta_term
 
             # Final observed time step
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+
+
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
+
+                                        
+                # Use external variables for the last time step
+                # 
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+            
+            # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
@@ -645,7 +760,16 @@ class PTF_Model(nn.Module):
             
         else:
             
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
+
+                                        
+                # Use external variables for the last time step
+                # 
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             # teach_forc = torch.matmul(last_partial_delta_term,self.cell.ConMat)
@@ -670,18 +794,39 @@ class PTF_Model(nn.Module):
 
             with torch.no_grad():
                 # Use the last observed state as the starting point
-                future_states[:, 0, :] =  next_state# states[:, seq_length - 1, :]
+                if ext_data_window is not None:
 
-                # Forecast future steps
-                for t in range(1, forecast_horizon):
-                    forecast, next_state, _,__ = self.cell(
-                        state=future_states[:, t - 1, :],prob=0.,
-                        teacher_forcing=False
-                    )
+
+                # Use the last observed state as the starting point
+                    future_states[:, 0, :] = states[:, seq_length - 1, :]
+
+                    # Forecast future steps
+                    for t in range(1, forecast_horizon):
+                        forecast, next_state, _ , __= self.cell( state=future_states[:, t - 1, :],
+                                                            teacher_forcing=False , 
+                                                            externals = future_externals[:, t - 1, :] ,
+                                                            prob = .0)
+                        
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ), self.cell.ConMat.T)
+
+                
                     forecasts[:, t - 1, :] = forecast
                     future_states[:, t, :] = next_state
 
-            forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+                else:
+
+                    future_states[:, 0, :] = states[:, seq_length - 1, :]    
+
+                    
+                    for t in range(1, forecast_horizon):
+                        
+                        forecast, next_state, _, __ = self.cell( state=future_states[:, t - 1, :],
+                                                            teacher_forcing=False, prob  = 0. )
+                        
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
+
+                forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
 
         return HCNNpTFForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms,
                                     partial_delta_terms =partial_delta_terms, forecasts=forecasts, future_states=future_states )
@@ -740,6 +885,10 @@ class LForm_Model(nn.Module):
     `n_hid_vars` : int
         Number of hidden (latent) variables in the state.
 
+    `n_ext_vars` : int
+        Number of external variables (optional). 
+
+
     `s0_nature` : Literal['zeros_', 'random_']
         Strategy for initializing the initial hidden state `s0`.
         - 'zeros_': Initialize as a zero vector.
@@ -762,6 +911,9 @@ class LForm_Model(nn.Module):
 
     `n_hid_vars` : int
         Number of hidden variables.
+
+    `n_ext_vars` : int
+        Number of external variables (optional). 
 
     `s0_nature` : str
         Initial state setup strategy ('zeros_' or 'random_').
@@ -813,7 +965,8 @@ class LForm_Model(nn.Module):
                  s0_nature: Literal['zeros_', 'random_'],
                  train_s0: bool, batch_size: int = 1,
                  init_range: Tuple[float, float] = (-0.75, 0.75),
-                 init_diag: float = 1.0):
+                 init_diag: float = 1.0,
+                n_ext_vars : Optional[int] = None):
         
         super(LForm_Model, self).__init__()
         self.n_obs_vars = n_obs_vars
@@ -827,8 +980,19 @@ class LForm_Model(nn.Module):
         self.init_range = init_range
         self.init_diag = init_diag
 
-        self.cell = lstm_cell(n_obs_vars= self.n_obs_vars,n_hid_vars= self.n_hid_vars,
-                               init_range = self.init_range, init_diag=self.init_diag)
+        if n_ext_vars is not None:
+
+            self.n_ext_vars = n_ext_vars
+
+            self.cell = lstm_cell(n_obs_vars= self.n_obs_vars,n_hid_vars= self.n_hid_vars,
+                               init_range = self.init_range, init_diag=self.init_diag,
+                               n_ext_vars = n_ext_vars)
+            
+        else:
+            self.cell = lstm_cell(n_obs_vars= self.n_obs_vars,n_hid_vars= self.n_hid_vars,
+                               init_range = self.init_range, init_diag=self.init_diag
+                               )
+            
         self.device = self.cell._get_default_device()
         self.name = self._generate_model_name()
 
@@ -844,9 +1008,15 @@ class LForm_Model(nn.Module):
         # Make `s0` a trainable parameter (single vector, not repeated for batch size)
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
-    def _generate_model_name(self) -> str:
+    def _generate_model_name(self, n_ext_vars: Optional[int]= None) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+
+        if n_ext_vars is not None:
+            name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+        
+        else:
+
+            name = f"LFormModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -864,7 +1034,9 @@ class LForm_Model(nn.Module):
     
 
     def forward(self, data_window: torch.Tensor,
-                forecast_horizon: Optional[int] = None) -> HCNNLFormForwardOutput:
+                ext_data_window: Optional[torch.Tensor]=None ,
+                forecast_horizon: Optional[int] = None,
+                future_externals: Optional[torch.Tensor]=None ) -> HCNNLFormForwardOutput:
         """
         Executes a forward pass through the HCNNLForm model over a sequence of observations.
         Supports both teacher-forced training and optional auto-regressive forecasting.
@@ -881,6 +1053,11 @@ class LForm_Model(nn.Module):
             If None, no forecasting is performed. If specified, the model enters
             auto-regressive prediction mode for `forecast_horizon` steps.
 
+            
+        `ext_data_window` : torch.Tensor
+            External variables sequence of shape (`batch_size`, `sequence_length`, `n_ext_vars`).
+            Represents a batch of multivariate time series accounting for the external variables.
+   
         Returns
         -------
         HCNNLFormForwardOutput
@@ -931,8 +1108,9 @@ class LForm_Model(nn.Module):
                 expectation, next_state, delta_term = self.cell(
                     state=states[:, t, :],
                     teacher_forcing=True,
-                    observation=data_window[:, t, :]
-                )
+                    observation=data_window[:, t, :],
+                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None )
+                
                 expectations[:, t, :] = expectation
                 states[:, t + 1, :] = next_state
                 delta_terms[:, t, :] = delta_term
@@ -940,8 +1118,12 @@ class LForm_Model(nn.Module):
             # Final observed time step
             # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             # expectations[:, seq_length - 1, :] = last_y_hat
-
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
@@ -950,7 +1132,15 @@ class LForm_Model(nn.Module):
             # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
         else:
 
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+
+
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
+
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
@@ -972,21 +1162,38 @@ class LForm_Model(nn.Module):
             next_state = r_state + self.cell.D(lstm_block)
 
             with torch.no_grad():
-                # Use the last observed state as the starting point
+
                 future_states[:, 0, :] = next_state# states[:, seq_length - 1, :]
+                if ext_data_window is not None:
+                    # Use the last observed state as the starting point
+                    future_states[:, 0, :] = states[:, seq_length - 1, :]
+
+                    # Forecast future steps
+                    for t in range(1, forecast_horizon):
+                        forecast, next_state, _ = self.cell(
+                            state=future_states[:, t - 1, :],
+                            teacher_forcing=False,
+                            externals=future_externals[:, t - 1, :] )
+                # Use the last observed state as the starting point
+            
+            
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+
+                else:
 
                 # Forecast future steps
-                for t in range(1, forecast_horizon):
-                    forecast, next_state, _ = self.cell(
-                        state=future_states[:, t - 1, :],
-                        teacher_forcing=False
-                    )
-                    forecasts[:, t - 1, :] = forecast
-                    future_states[:, t, :] = next_state
+                    for t in range(1, forecast_horizon):
+                        forecast, next_state, _ = self.cell(
+                            state=future_states[:, t - 1, :],
+                            teacher_forcing=False
+                        )
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
 
-            forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
-
-        return expectations, states, delta_terms, forecasts, future_states
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+        return HCNNLFormForwardOutput(expectations=expectations , states=states,delta_terms=delta_terms,
+                                      forecasts=forecasts, future_states=future_states)
+        # return expectations, states, delta_terms, forecasts, future_states
 
     def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
         """Saves model checkpoint."""
@@ -1038,6 +1245,9 @@ class LSpa_Model(nn.Module):
     `n_hid_vars` : int
         Number of hidden (latent) variables in the state.
 
+    `n_ext_vars` : int
+        Number of external variables (optional). 
+
     `s0_nature` : Literal['zeros_', 'random_']
         Strategy for initializing the initial hidden state `s0`.
         - 'zeros_': Initialize as a zero vector.
@@ -1072,6 +1282,9 @@ class LSpa_Model(nn.Module):
 
     `n_hid_vars` : int
         Number of hidden variables.
+
+    `n_ext_vars` : int
+        Number of external variables (optional). 
 
     `s0_nature` : str
         Initial state setup strategy ('zeros_' or 'random_').
@@ -1130,7 +1343,8 @@ class LSpa_Model(nn.Module):
                  mask_type: str = Literal['non_obs_block', 'random_block'] , 
                  sparsity_ratio : float = 0.25 ,
                  init_range: Tuple[float, float] = (-0.75, 0.75),
-                 bias :bool =False):
+                 bias :bool =False,
+                n_ext_vars : Optional[int] = None):
         
         super(LSpa_Model, self).__init__()
         self.n_obs_vars = n_obs_vars
@@ -1147,12 +1361,28 @@ class LSpa_Model(nn.Module):
 
         self.bias = bias
 
-        self.cell = LargeSparse_cell(n_obs_vars =self.n_obs_vars, 
-                                     n_hid_vars = self.n_hid_vars,
-                                     bias = self.bias,
-                                    init_range = self.init_range, 
-                                    sparsity_ratio=self.sparsity_ratio, 
-                                    mask_type = mask_type)
+
+        if n_ext_vars is not None:
+
+            self.n_ext_vars = n_ext_vars
+
+            self.cell = LargeSparse_cell(n_obs_vars =self.n_obs_vars, 
+                                    n_hid_vars = self.n_hid_vars,
+                                    bias = self.bias,
+                                init_range = self.init_range, 
+                                sparsity_ratio=self.sparsity_ratio, 
+                                mask_type = mask_type,
+                                n_ext_vars = self.n_ext_vars)
+            
+        else:
+            
+
+            self.cell = LargeSparse_cell(n_obs_vars =self.n_obs_vars, 
+                                        n_hid_vars = self.n_hid_vars,
+                                        bias = self.bias,
+                                        init_range = self.init_range, 
+                                        sparsity_ratio=self.sparsity_ratio, 
+                                        mask_type = mask_type)
 
         self.device = self.cell._get_default_device()
 
@@ -1172,9 +1402,15 @@ class LSpa_Model(nn.Module):
         self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
 
 
-    def _generate_model_name(self) -> str:
+    def _generate_model_name(self , n_ext_vars: Optional[int]= None) -> str:
         """Generates a unique model name based on configuration."""
-        name = f"LSpaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+
+        if n_ext_vars is not None:
+            name = f"LSpaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{self.n_ext_vars}"
+        
+        else:
+
+            name = f"LSpaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
         else:
@@ -1191,7 +1427,9 @@ class LSpa_Model(nn.Module):
     
 
     def forward(self, data_window: torch.Tensor,
-                forecast_horizon: Optional[int] = None) -> HCNNLSpaForwardOutput:
+                ext_data_window: Optional[torch.Tensor]=None ,
+                forecast_horizon: Optional[int] = None ,
+                future_externals: Optional[torch.Tensor]=None ) -> HCNNLSpaForwardOutput:
         """
         Executes a forward pass through the HCNNLSpa model over a sequence of observations.
         Supports both teacher-forced training and optional auto-regressive forecasting.
@@ -1206,6 +1444,10 @@ class LSpa_Model(nn.Module):
             Number of future steps to forecast beyond the observed `data_window`.
             If None, no forecasting is performed. If specified, the model enters
             auto-regressive prediction mode for `forecast_horizon` steps.
+
+        `ext_data_window` : torch.Tensor
+            External variables sequence of shape (`batch_size`, `sequence_length`, `n_ext_vars`).
+            Represents a batch of multivariate time series accounting for the external variables.
 
         Returns
         -------
@@ -1257,7 +1499,9 @@ class LSpa_Model(nn.Module):
                 expectation, next_state, delta_term = self.cell(
                     state=states[:, t, :],
                     teacher_forcing=True,
-                    observation=data_window[:, t, :]
+                    observation=data_window[:, t, :],
+                    externals=ext_data_window[:, t, :] if ext_data_window is not None else None
+
                 )
                 expectations[:, t, :] = expectation
                 states[:, t + 1, :] = next_state
@@ -1267,7 +1511,16 @@ class LSpa_Model(nn.Module):
             # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
             # expectations[:, seq_length - 1, :] = last_y_hat
 
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
+
+                                        
+                # Use external variables for the last time step
+                # 
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
+            
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
             
@@ -1276,8 +1529,14 @@ class LSpa_Model(nn.Module):
             delta_terms[:, seq_length - 1, :] = last_delta_term
             # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
         else:
+        
+            if ext_data_window is not None:
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
+                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
+            else:
 
-            last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+                last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
+            
             last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
             # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
 
@@ -1310,20 +1569,38 @@ class LSpa_Model(nn.Module):
             r_state = states[:, 0, :] - teach_forc
             next_state = self.cell.Sparse_A(torch.tanh(r_state))
             with torch.no_grad():
+
+                if ext_data_window is not None:
                 # Use the last observed state as the starting point
-                future_states[:, 0, :] = next_state#states[:, seq_length - 1, :]
+                    future_states[:, 0, :] = next_state#states[:, seq_length - 1, :]
 
                 # Forecast future steps
-                for t in range(1, forecast_horizon):
-                    forecast, next_state, _ = self.cell(
-                        state=future_states[:, t - 1, :],
-                        teacher_forcing=False
-                    )
-                    forecasts[:, t - 1, :] = forecast
-                    future_states[:, t, :] = next_state
+                    for t in range(1, forecast_horizon):
+                        forecast, next_state, _ = self.cell(
+                            state=future_states[:, t - 1, :],
+                            teacher_forcing=False,
+                            externals = future_externals[:, t - 1, :] )
+                    
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
 
-            forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ), self.cell.ConMat.T)
+                else:
 
+
+                    future_states[:, 0, :] = states[:, seq_length - 1, :]    
+
+                    
+                    for t in range(1, forecast_horizon):
+                        
+                        forecast, next_state, _ = self.cell(
+                            state=future_states[:, t - 1, :],
+                            teacher_forcing=False
+                        )
+                        forecasts[:, t - 1, :] = forecast
+                        future_states[:, t, :] = next_state
+
+                    forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
         # return expectations, states, delta_terms, forecasts, future_states 
         return HCNNLSpaForwardOutput( expectations=expectations, states=states,
                                      delta_terms=delta_terms, forecasts=forecasts,
