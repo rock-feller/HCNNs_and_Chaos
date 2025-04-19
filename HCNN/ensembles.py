@@ -57,7 +57,7 @@ class VanillaHCNNEnsembleTrainer:
             model.name = f"ensemble_member_{i+1}:{model._generate_model_name()}"  # for unique checkpoint names
             self.models.append(model)
 
-    def train(
+    def train_only(
         self,
         data_loader,
         epochs: int = 10,
@@ -270,7 +270,7 @@ class PTFHCNNEnsembleTrainer:
             model.name = f"ensemble_member_{i+1}:{model._generate_model_name()}"
             self.models.append(model)
 
-    def train(self, data_loader, epochs=10, verbose=True, cleanup=True):
+    def train_only(self, data_loader, epochs=10, verbose=True, cleanup=True):
         optimizers = [
             torch.optim.Adam(m.parameters(), lr=self.lr) if self.optimizer == "adam"
             else torch.optim.SGD(m.parameters(), lr=self.lr)
@@ -450,7 +450,7 @@ class HCNNLFormEnsembleTrainer:
             model.name = f"ensemble_member_{i+1}:{model._generate_model_name()}"
             self.models.append(model)
 
-    def train(self, data_loader, epochs: int = 10, verbose: bool = True, cleanup: bool = True):
+    def train_only(self, data_loader, epochs: int = 10, verbose: bool = True, cleanup: bool = True):
         optimizers = [
             torch.optim.Adam(m.parameters(), lr=self.lr) if self.optimizer == "adam"
             else torch.optim.SGD(m.parameters(), lr=self.lr)
@@ -632,7 +632,7 @@ class LSPaEnsembleTrainer:
             model.name = f"ensemble_member_{i+1}:{model._generate_model_name()}"
             self.models.append(model)
 
-    def train(self, data_loader, epochs: int = 10, verbose: bool = True, cleanup: bool = True):
+    def train_only(self, data_loader, epochs: int = 10, verbose: bool = True, cleanup: bool = True):
         if self.optimizer == "adam":
             optimizers = [torch.optim.Adam(m.parameters(), lr=self.lr) for m in self.models]
         else:
