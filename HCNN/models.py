@@ -1,8 +1,8 @@
-import os
+import os, glob
 import torch
 from torch import nn
 from typing import Literal, Tuple, Optional
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 
 from .modules import vanilla_cell , ptf_cell, lstm_cell, LargeSparse_cell, CustomLinear
 
@@ -64,8 +64,6 @@ class Vanilla_Model(nn.Module):
     `train_s0` : bool
         If True, the initial state `s0` is a trainable parameter.
 
-    `batch_size` : int, optional
-        Number of sequences to process in parallel. Default is 1.
 
     `init_range` : Tuple[float, float], optional
         Range for uniform initialization when `s0_nature='random_'`. Also passed to the internal cell.
@@ -88,8 +86,6 @@ class Vanilla_Model(nn.Module):
     `train_s0` : bool
         Whether the initial hidden state `s0` is trainable.
 
-    `batch_size` : int
-        Number of parallel input sequences to process.
 
     `init_range` : Tuple[float, float]
         Initialization range for random initialization.
@@ -128,7 +124,7 @@ class Vanilla_Model(nn.Module):
 
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
-                 train_s0: bool, batch_size: int = 1,
+                 train_s0: bool, 
                  init_range: Tuple[float, float] = (-0.75, 0.75), 
                  n_ext_vars : Optional[int] = None):
         
@@ -141,7 +137,7 @@ class Vanilla_Model(nn.Module):
 
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
-        self.batch_size = batch_size
+       
 
         if n_ext_vars is not None:
 
@@ -402,18 +398,38 @@ class Vanilla_Model(nn.Module):
         return VanillaHCNNForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms, forecasts=forecasts, future_states=future_states )
 
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
-        """Saves model checkpoint."""
-        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
-        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+    # def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints"):
+    #     """Saves model checkpoint to specified directory if performance improves."""
+    #     os.makedirs(checkpoint_dir, exist_ok=True)
+    #     checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
+    #     torch.save({
+    #         "epoch": epoch,
+    #         "model_state_dict": self.state_dict(),
+    #         "optimizer_state_dict": optimizer.state_dict(),
+    #         "loss": loss
+    #     }, checkpoint_path)
+    #     print(f"✅ Checkpoint saved at {checkpoint_path}")
+
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+        """Saves model checkpoint. Optionally removes older ones."""
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        if cleanup:
+            # Remove previous checkpoints for this model
+            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            old_files = glob.glob(pattern)
+            for f in old_files:
+                os.remove(f)
+                print(f"🗑️ Removed old checkpoint: {f}")
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss
         }, checkpoint_path)
-        print(f"Checkpoint saved at {checkpoint_path}")
-
+        print(f"✅ Checkpoint saved at {checkpoint_path}")
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
         if os.path.isfile(checkpoint_path):
@@ -462,8 +478,6 @@ class PTF_Model(nn.Module):
     train_s0 : bool
         Whether the initial hidden state `s0` is a learnable parameter.
 
-    batch_size : int, optional
-        Number of sequences to process in parallel. Default is 1.
 
     init_range : Tuple[float, float], optional
         Tuple specifying the range for uniform weight initialization.
@@ -494,8 +508,6 @@ class PTF_Model(nn.Module):
     train_s0 : bool
         Whether `s0` is learnable.
 
-    batch_size : int
-        Number of sequences processed per batch.
 
     init_range : Tuple[float, float]
         Initialization range for both weights and optionally `s0`.
@@ -546,7 +558,7 @@ class PTF_Model(nn.Module):
 
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
-                 train_s0: bool, batch_size: int = 1,
+                 train_s0: bool,
                  init_range: Tuple[float, float] = (-0.75, 0.75), 
                  target_prob: float = 0.25 ,
                  drop_output:bool = False,
@@ -560,7 +572,6 @@ class PTF_Model(nn.Module):
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
         
-        self.batch_size = batch_size
         self.init_range = init_range
         self.target_prob = target_prob
         self.drop_output =  drop_output
@@ -873,17 +884,26 @@ class PTF_Model(nn.Module):
         return HCNNpTFForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms,
                                     partial_delta_terms =partial_delta_terms, forecasts=forecasts, future_states=future_states )
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
-        """Saves model checkpoint."""
-        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
-        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+        """Saves model checkpoint. Optionally removes older ones."""
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        if cleanup:
+            # Remove previous checkpoints for this model
+            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            old_files = glob.glob(pattern)
+            for f in old_files:
+                os.remove(f)
+                print(f"🗑️ Removed old checkpoint: {f}")
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss
         }, checkpoint_path)
-        print(f"Checkpoint saved at {checkpoint_path}")
+        print(f"✅ Checkpoint saved at {checkpoint_path}")
 
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
@@ -939,8 +959,6 @@ class LForm_Model(nn.Module):
     `train_s0` : bool
         If True, the initial state `s0` is a trainable parameter.
 
-    `batch_size` : int, optional
-        Number of sequences to process in parallel. Default is 1.
 
     `init_range` : Tuple[float, float], optional
         Range for uniform initialization when `s0_nature='random_'`. Also passed to the internal cell.
@@ -963,8 +981,7 @@ class LForm_Model(nn.Module):
     `train_s0` : bool
         Whether the initial hidden state `s0` is trainable.
 
-    `batch_size` : int
-        Number of parallel input sequences to process.
+
 
     `init_range` : Tuple[float, float]
         Initialization range for random initialization.
@@ -1005,7 +1022,7 @@ class LForm_Model(nn.Module):
 
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
-                 train_s0: bool, batch_size: int = 1,
+                 train_s0: bool,
                  init_range: Tuple[float, float] = (-0.75, 0.75),
                  init_diag: float = 1.0,
                 n_ext_vars : Optional[int] = None):
@@ -1018,7 +1035,6 @@ class LForm_Model(nn.Module):
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
 
-        self.batch_size = batch_size
         self.init_range = init_range
         self.init_diag = init_diag
 
@@ -1273,17 +1289,26 @@ class LForm_Model(nn.Module):
                                       forecasts=forecasts, future_states=future_states)
         # return expectations, states, delta_terms, forecasts, future_states
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
-        """Saves model checkpoint."""
-        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
-        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+        """Saves model checkpoint. Optionally removes older ones."""
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        if cleanup:
+            # Remove previous checkpoints for this model
+            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            old_files = glob.glob(pattern)
+            for f in old_files:
+                os.remove(f)
+                print(f"🗑️ Removed old checkpoint: {f}")
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss
         }, checkpoint_path)
-        print(f"Checkpoint saved at {checkpoint_path}")
+        print(f"✅ Checkpoint saved at {checkpoint_path}")
 
 
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
@@ -1334,8 +1359,6 @@ class LSpa_Model(nn.Module):
     `train_s0` : bool
         If True, the initial state `s0` is a trainable parameter.
 
-    `batch_size` : int, optional
-        Number of sequences to process in parallel. Default is 1.
 
     `init_range` : Tuple[float, float], optional
         Range for uniform initialization when `s0_nature='random_'`. Also passed to the internal cell.
@@ -1370,8 +1393,6 @@ class LSpa_Model(nn.Module):
     `train_s0` : bool
         Whether the initial hidden state `s0` is trainable.
 
-    `batch_size` : int
-        Number of parallel input sequences to process.
 
     `init_range` : Tuple[float, float]
         Initialization range for random initialization.
@@ -1417,7 +1438,7 @@ class LSpa_Model(nn.Module):
 
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
-                 train_s0: bool, batch_size: int = 1,
+                 train_s0: bool, 
                  mask_type: str = Literal['non_obs_block', 'random_block'] , 
                  sparsity_ratio : float = 0.25 ,
                  init_range: Tuple[float, float] = (-0.75, 0.75),
@@ -1431,7 +1452,6 @@ class LSpa_Model(nn.Module):
         self.s0_nature = s0_nature
         self.train_s0 = train_s0
 
-        self.batch_size = batch_size
         self.init_range = init_range
         self.mask_type = mask_type
 
@@ -1706,17 +1726,27 @@ class LSpa_Model(nn.Module):
                                      future_states=future_states)
 
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer):
-        """Saves model checkpoint."""
-        checkpoint_path = f"checkpoints/{self.name}_epoch{epoch}.pth"
-        os.makedirs("checkpoints", exist_ok=True)  # Ensure the directory exists
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+        """Saves model checkpoint. Optionally removes older ones."""
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        if cleanup:
+            # Remove previous checkpoints for this model
+            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            old_files = glob.glob(pattern)
+            for f in old_files:
+                os.remove(f)
+                print(f"🗑️ Removed old checkpoint: {f}")
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss
         }, checkpoint_path)
-        print(f"Checkpoint saved at {checkpoint_path}")
+        print(f"✅ Checkpoint saved at {checkpoint_path}")
+
 
 
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
