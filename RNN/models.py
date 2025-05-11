@@ -248,14 +248,13 @@ class RNN_Model(nn.Module):
 
         return output_seq, future_outputs
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, 
-                        checkpoint_dir: str = "checkpoints",cleanup:bool =False, add_stuffs:Optional[str]="") -> None:
-
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer,
+                        checkpoint_dir: str = "checkpoints", cleanup: bool = False, add_stuffs:Optional[str]="") -> None:
 
         if cleanup:
             patterns = [
         os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch*.pth"),
-        os.path.join(checkpoint_dir, "*.csv")]
+        os.path.join(checkpoint_dir, f"*{add_stuffs}_.csv")]
             
         for pattern in patterns:
             old_files = glob.glob(pattern)
@@ -264,18 +263,14 @@ class RNN_Model(nn.Module):
                 print(f"🗑️ Removed old checkpoint: {f}")
 
         os.makedirs(checkpoint_dir, exist_ok=True)
-
-        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch{epoch}.pth")
-        os.makedirs("checkpoints", exist_ok=True)
+        path = os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch{epoch}.pth")
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss
-        }, checkpoint_path)
-        print(f"Checkpoint saved at {checkpoint_path}")
-
-
+        }, path)
+        print(f"Checkpoint saved at {path}")
 
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None) -> Tuple[int, float]:
         if os.path.isfile(checkpoint_path):

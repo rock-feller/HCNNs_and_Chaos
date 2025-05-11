@@ -222,7 +222,7 @@ class LSTM_Model(nn.Module):
         if cleanup:
             patterns = [
         os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch*.pth"),
-        os.path.join(checkpoint_dir, "*.csv")]
+        os.path.join(checkpoint_dir, f"*{add_stuffs}_.csv")]
             
         for pattern in patterns:
             old_files = glob.glob(pattern)
