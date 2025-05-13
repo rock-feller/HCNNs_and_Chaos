@@ -1,5 +1,6 @@
 import torch
 import os
+from .models import LSTM_Model
 from typing import List, Optional, Literal, Tuple
 from torch import nn
 
@@ -229,7 +230,7 @@ class LSTMEnsemble:
                 raise FileNotFoundError(f"❌ Checkpoint not found at: {checkpoint_path}")
 
             # Reconstruct a fresh model instance
-            model = RNN_Model(input_size=self.input_size,
+            model = LSTM_Model(input_size=self.input_size,
                             hidden_size=self.hidden_size,
                             output_size=self.output_size,
                             s0_nature=self.s0_nature,
