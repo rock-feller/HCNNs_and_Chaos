@@ -1,5 +1,7 @@
 import torch
 import os
+from .models import RNN_Model
+
 from typing import List, Optional, Literal, Tuple
 from torch import nn
 
