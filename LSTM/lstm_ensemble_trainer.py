@@ -30,7 +30,7 @@ class EnsembleLSTMTrainer:
     """
 
     def __init__(self,
-                 ensembles:Dict,
+                 ensembles:List,
                 #  optimizers: List[torch.optim.Optimizer],
                 # optimizer:str,
                  loss_fn: torch.nn.Module,
@@ -45,7 +45,7 @@ class EnsembleLSTMTrainer:
         # self.device = ensemble.models[0]._get_default_device()
 
         timestamp = datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
-        self.save_dir = f"./checkpoints_{ensembles[0]['member_1'].name.split("_")[0]}ensemble_{timestamp}"
+        self.save_dir = f"./checkpoints_{ensembles[0]['member_1'].name.split("_")[0]}_{self.best_on}_ensemble_{timestamp}"
         os.makedirs(self.save_dir, exist_ok=True)
 
     
@@ -68,13 +68,18 @@ class EnsembleLSTMTrainer:
         if self.best_on == 'individual':
 
             
+            
+
 
 
             if backprop_mode == 'per_batch':
                 epoch_losses = []
+
+
+                epoch_loss_summary = {}
                 for epoch in range(num_epochs):
                     # epoch_losses = []
-                    epoch_loss_summary ={}
+                    batch_loss_summary ={}
 
                     for idx, model in enumerate(self.ensembles):
                         member_loss_summary = {}
@@ -109,25 +114,36 @@ class EnsembleLSTMTrainer:
                             loss.backward()
                             optimizer.step()
 
+
+                            batch_loss_summary.append({f'batch_idx_{batch_count}': loss.item()})
+
+                            # total_loss += loss.item()
+
                             # member_loss_summary[f'member_{idx+1}'] = loss.item()
-                            member_loss_summary[f'batch_idx_{batch_count+1}'] = {'train_loss':loss.item()}
+                            member_loss_summary[f'batch_idx_{batch_count}'] = {'train_loss':loss.item()}
 
                             if loss < best_losses[idx]:
-                                    model[f'member_{idx+1}'].save_checkpoint(epoch+1, loss, optimizer,
-                                                            checkpoint_dir=self.save_dir,
-                                                            cleanup=True,
-                                                            add_stuffs=f"_member_{idx+1}")
-                                    best_losses[idx] = loss
-                                    print(f"✅ [Model {idx+1}] New best train loss: {loss:.6f}")
+                                model[f'member_{idx+1}'].save_checkpoint(epoch = epoch+1, loss = loss, 
+                                                                         optimizer =optimizer,
+                                                        checkpoint_dir=self.save_dir,
+                                                        cleanup=True,
+                                                        add_stuffs=f"_member_{idx+1}")
+                                best_losses[idx] = loss.item()
+                                print(f"✅ [Model {idx+1}] New best train loss: {loss:.6f}")
                             else:
-                                print(f"ℹ️ [Model {idx+1}] Train loss {loss:.6f} not better than best {best_losses[idx]:.6f}. Skipping save.")
+                                print(f"ℹ️ [Model {idx+1}] Train loss {loss.item():.6f} not better than best {best_losses[idx]:.6f}. Skipping save.")
 
                         batch_idx += 1
+
+                        avg_train_loss = total_loss / batch_count
                         
-                        epoch_loss_summary[f'member_{idx+1}'] = member_loss_summary
-
-                    # avg_batch_loss = total_loss / batch_count
-
+                        member_loss_summary[f'member_{idx+1}'] = batch_loss_summary
+                        
+                        
+                        print(f"[Epoch {epoch+1} Processed all batches for Model member {idx+1}] Average Train Loss: {avg_train_loss:.6f}")
+                    
+                    epoch_loss_summary[f'member_{idx+1}'] = member_loss_summary
+                    
                     print(f"[End of Epoch {epoch+1}  =================================================================")
                           #)#| Model {idx+1}] Train Loss: {avg_batch_loss:.6f}")
 
@@ -193,16 +209,17 @@ class EnsembleLSTMTrainer:
                         
                         # avg_loss = total_loss.item() #/ batch_count
 
-                        member_loss_summary[f'member_{idx+1}'] = total_loss.item()
+                        member_loss_summary[f'member_{idx+1}'] = {'train_loss': total_loss.item()}
                         # epoch_losses.append({ 'epoch': f'{epoch+1}' , f'member_{idx+1}': total_loss.item()})
-                        print(f"[Epoch {epoch+1} | Model {idx+1}] Train Loss: {total_loss:.6f}")
+                        # avg_calc_nested = AverageCalculator(member_loss_summary)
+                        print(f"[Epoch {epoch+1} Processed all batches for Model member {idx+1}] Average Train Loss: {total_loss.item():.6f}")
 
                         if total_loss < best_losses[idx]:
                             model[f'member_{idx+1}'].save_checkpoint(epoch+1, total_loss, optimizer,
                                                                     checkpoint_dir=self.save_dir,
                                                                     cleanup=True,
                                                                     add_stuffs=f"_member_{idx+1}")
-                            best_losses[idx] = total_loss
+                            best_losses[idx] = total_loss.item()
                             print(f"✅ [Model {idx+1}] New best train loss: {total_loss:.6f}")
                         else:
                             print(f"ℹ️ [Model {idx+1}] Train loss {total_loss:.6f} not better than best {best_losses[idx]:.6f}. Skipping save.")
