@@ -410,19 +410,26 @@ class Vanilla_Model(nn.Module):
     #     }, checkpoint_path)
     #     print(f"✅ Checkpoint saved at {checkpoint_path}")
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer,
+                         checkpoint_dir: str = "checkpoints", cleanup: bool = False,add_stuffs:Optional[str]="") -> None:
         """Saves model checkpoint. Optionally removes older ones."""
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         if cleanup:
-            # Remove previous checkpoints for this model
-            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            patterns = [
+        os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch*.pth"),
+        os.path.join(checkpoint_dir, f"*{add_stuffs}_.csv")]
+            
+        for pattern in patterns:
             old_files = glob.glob(pattern)
             for f in old_files:
                 os.remove(f)
                 print(f"🗑️ Removed old checkpoint: {f}")
 
-        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch{epoch}.pth")
+
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
@@ -884,19 +891,26 @@ class PTF_Model(nn.Module):
         return HCNNpTFForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms,
                                     partial_delta_terms =partial_delta_terms, forecasts=forecasts, future_states=future_states )
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer,
+                         checkpoint_dir: str = "checkpoints", cleanup: bool = False,add_stuffs:Optional[str]="") -> None:
         """Saves model checkpoint. Optionally removes older ones."""
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         if cleanup:
-            # Remove previous checkpoints for this model
-            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            patterns = [
+        os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch*.pth"),
+        os.path.join(checkpoint_dir, f"*{add_stuffs}_.csv")]
+            
+        for pattern in patterns:
             old_files = glob.glob(pattern)
             for f in old_files:
                 os.remove(f)
                 print(f"🗑️ Removed old checkpoint: {f}")
 
-        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch{epoch}.pth")
+
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
@@ -904,7 +918,6 @@ class PTF_Model(nn.Module):
             "loss": loss
         }, checkpoint_path)
         print(f"✅ Checkpoint saved at {checkpoint_path}")
-
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
         if os.path.isfile(checkpoint_path):
@@ -918,6 +931,7 @@ class PTF_Model(nn.Module):
             return epoch, loss
         else:
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
 
 
 
@@ -1289,19 +1303,26 @@ class LForm_Model(nn.Module):
                                       forecasts=forecasts, future_states=future_states)
         # return expectations, states, delta_terms, forecasts, future_states
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer,
+                         checkpoint_dir: str = "checkpoints", cleanup: bool = False,add_stuffs:Optional[str]="") -> None:
         """Saves model checkpoint. Optionally removes older ones."""
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         if cleanup:
-            # Remove previous checkpoints for this model
-            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            patterns = [
+        os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch*.pth"),
+        os.path.join(checkpoint_dir, f"*{add_stuffs}_.csv")]
+            
+        for pattern in patterns:
             old_files = glob.glob(pattern)
             for f in old_files:
                 os.remove(f)
                 print(f"🗑️ Removed old checkpoint: {f}")
 
-        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch{epoch}.pth")
+
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
@@ -1309,8 +1330,6 @@ class LForm_Model(nn.Module):
             "loss": loss
         }, checkpoint_path)
         print(f"✅ Checkpoint saved at {checkpoint_path}")
-
-
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
         if os.path.isfile(checkpoint_path):
@@ -1324,6 +1343,7 @@ class LForm_Model(nn.Module):
             return epoch, loss
         else:
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
 
 
 
@@ -1726,19 +1746,26 @@ class LSpa_Model(nn.Module):
                                      future_states=future_states)
 
 
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints", cleanup: bool = False):
+    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer,
+                         checkpoint_dir: str = "checkpoints", cleanup: bool = False,add_stuffs:Optional[str]="") -> None:
         """Saves model checkpoint. Optionally removes older ones."""
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         if cleanup:
-            # Remove previous checkpoints for this model
-            pattern = os.path.join(checkpoint_dir, f"{self.name}_epoch*.pth")
+            patterns = [
+        os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch*.pth"),
+        os.path.join(checkpoint_dir, f"*{add_stuffs}_.csv")]
+            
+        for pattern in patterns:
             old_files = glob.glob(pattern)
             for f in old_files:
                 os.remove(f)
                 print(f"🗑️ Removed old checkpoint: {f}")
 
-        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch{epoch}.pth")
+
         torch.save({
             "epoch": epoch,
             "model_state_dict": self.state_dict(),
@@ -1746,9 +1773,6 @@ class LSpa_Model(nn.Module):
             "loss": loss
         }, checkpoint_path)
         print(f"✅ Checkpoint saved at {checkpoint_path}")
-
-
-
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
         if os.path.isfile(checkpoint_path):
@@ -1762,4 +1786,5 @@ class LSpa_Model(nn.Module):
             return epoch, loss
         else:
             raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+
 
