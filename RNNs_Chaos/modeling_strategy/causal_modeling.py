@@ -252,6 +252,7 @@ class RNNs_modelling_scenario():
 
         print(f'Training completed. Total time taken: {total_time} seconds')
         result_dict['Total_TrainingTime'] = total_time
+        return result_dict
 
 
     def forecast_seq_to_seq_lstm(self, model, input_sequence: torch.Tensor, h0_c0_tuple: Tuple[torch.Tensor, torch.Tensor], n_steps: int) -> torch.Tensor:
