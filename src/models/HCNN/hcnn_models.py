@@ -977,6 +977,9 @@ class LForm_Model(nn.Module):
     `init_range` : Tuple[float, float], optional
         Range for uniform initialization when `s0_nature='random_'`. Also passed to the internal cell.
 
+    `init_diag` : float, optional
+        Initial value for the diagonal matrix `D` in the LSTM cell.
+
         
     Direct Attributes (from inputs)
     -------------------------------
