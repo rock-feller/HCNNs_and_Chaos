@@ -1,51 +1,90 @@
-# HCNNs_and_Chaos
-In this repo, you will find  all the codes that were used in various experiments for my PhD. This includes HCNN and RNN modules for the modeling of chaotic systems. 
+# HCNNs\_and\_Chaos
+
+In this repo, you will find all the codes used in experiments from my PhD, focusing on the modeling of chaotic systems using Historical Consistent Neural Networks (HCNNs) and Recurrent Neural Networks (RNNs). The project includes support for both single-model and ensemble-based training pipelines implemented in PyTorch.
+
 ## Code Implementation Overview
 
-The development and implementation of the Historical Consistent Neural Networks (HCNN) and their various long-memory improvement methods were carried out entirely in the *PyTorch* library, leveraging its flexibility and efficiency for deep learning tasks. This section provides an overview of the key aspects of the codebase, detailing the structure, functionality, and design principles behind the models, data handling, and training processes. The code is available in the GitHub repository at [HCNN_and_Chaos](https://github.com/rock-feller/HCNNs_and_Chaos).
+The entire modeling stack has been restructured under a unified `src/` directory that houses all components: models, training logic, utilities, and ensemble handling. This design provides modularity, reusability, and clean separation between HCNN and RNN workflows, whether run as single models or ensembles.
 
-### PyTorch-Based Implementation
+## 📁 Project Structure
 
-All the codes were implemented using *PyTorch*, where we created custom modules for our HCNN model classes. The HCNN models, including their memory improvement methods, were written from scratch. This includes the definition of the forward and backward methods, which dictate how the data flows through the network and how gradients are computed during backpropagation. Custom training functions were also implemented to handle the specific requirements of HCNN models, ensuring efficient and effective learning. An example of the Vanilla HCNN module is provided below.
+```
+src
+├── data                         # Custom data generation and loading utilities
+├── ensembles                   # All ensemble model definitions
+│   ├── classics.py             # LSTM and RNN ensemble classes
+│   ├── hcnns.py                # Vanilla, PTF, LForm, LSpa HCNN ensemble classes
+├── ensemble_trainers           # Ensemble trainer implementations
+│   ├── classic_training.py    # RNN and LSTM ensemble training
+│   ├── hcnn_training.py       # HCNN ensemble training modules
+├── models                      # Single model definitions
+│   ├── classic.py             # RNN_Model and LSTM_Model implementations
+│   ├── HCNN
+│   │   ├── hcnn_models.py     # Vanilla, PTF, LSpa, and LForm HCNN variants
+│   │   ├── modules.py         # Core HCNN module definitions
+│   │   ├── utils/             # Custom layers, functions, and math utilities
+│   │   ├── visualization.py   # Visualization support for HCNN behavior
+├── model_utils                 # Shared utilities
+│   ├── custom_losses.py       # Log-cosh, MSE and other loss functions
+├── single_trainers             # Single-model trainer modules
+│   ├── classic_training.py    # RNNTrainer for single RNN/LSTM
+│   ├── hcnn_training.py       # Trainers for Vanilla, PTF, LSpa, LForm
+```
 
-### Modeling Frameworks
+## 🧠 Modeling Support
 
-Two distinct modeling frameworks were developed to address different types of systems:
+The framework supports both single-model and ensemble training for:
 
-**HCNNs_Chaos**: This framework contains all the modules required for modeling the deterministic systems, including the Lorenz, Rossler, and Rabinovich-Fabrikant systems. It includes 4 folders:
+* **RNNs / LSTMs** via `models/classic.py` and `ensembles/classics.py`
+* **HCNN Variants**:
 
-- **data**: All the different custom logics for data generation can be found here.
-- **data_prep**: All the modules for data preprocessing can be found here, including normalization and transformation.
-- **hcnn_modules**: The different HCNN modules can be found here.
-- **modeling_strategy**: This folder contains all the different custom training functions.
+  * `Vanilla_Model`
+  * `PTF_Model` (Partial Teacher Forcing)
+  * `LForm_Model` (LSTM Formulation of HCNN)
+  * `LSpa_Model` (Large Sparse HCNN)
 
-A similar folder for RNN-based models (named **RNNs_Chaos**) can also be found at the same location.
+These are implemented under `models/HCNN/` and `ensembles/hcnns.py`, with modular training logic handled separately for single and ensemble variants.
 
-**HCNNs_Climate**: This framework contains all the modules required for modeling partially observable systems. It includes 3 folders:
+## 🎯 Training Modes
 
-- **data_prep**: All the modules for data preprocessing can be found here, including sliding windows, normalization, and transformation.
-- **hcnn_modules**: The different HCNN modules can be found here.
-- **modeling_strategy**: This folder contains all the different custom training functions.
+Each model (RNN, LSTM, or HCNN) can be trained via its respective trainer:
 
-A similar folder for RNN-based models (named **RNNs_Climate**) can also be found at the same location.
+* **Single-model training** (under `single_trainers/`):
 
-### Training and Results Management
+  * `RNNTrainer` for `RNN_Model` or `LSTM_Model`
+  * `HCNNTrainer` for Vanilla HCNN  and related variants
 
-To streamline the training process and facilitate the analysis of results, a structured approach was implemented for managing the outputs of the training sessions:
+* **Ensemble training** (under `ensemble_trainers/`):
 
-**Output Folders:** At the end of each training session, a results folder is automatically created. This folder is organized into three sub-folders, each serving a specific purpose:
+  * `ClassicEnsembleTrainer` for RNNs and LSTMs
+  * `HCNNEnsembleTrainer` variants for HCNNs (Vanilla, PTF, LForm, LSpa)
 
-- **output_dicts:** This sub-folder contains JavaScript Object Notations (JSON) files that are named according to the model names. Each JSON file tracks important metrics such as training loss, best test loss, and the time taken for each epoch. This detailed tracking allows for a comprehensive analysis of the models' performance and the computational resources required.
-- **csv_files:** This sub-folder stores Comma Separated Values (CSV) files that record the forecasted values in a tabular format. These CSV files are essential for preserving the predicted values and are particularly useful for subsequent plotting and visualization of the results.
-- **trained_models:** The serialized versions of the trained models (*state_dicts*) are saved in this sub-folder as `.pt` files. This allows for easy reusability of the models, enabling additional training sessions or deployment without the need to retrain from scratch.
+Each trainer supports:
 
-### Data Handling and Preprocessing
+* `train_only`: Trains on training data and tracks best model based on training loss.
+* `train_validate`: Uses calibration and forecast windows to validate predictions and save models based on best validation performance.
 
-The data used for training and evaluation were loaded and manipulated as tensors, enabling scalable and efficient computations. Given the complexity of the tasks and the volume of data, several preprocessing steps were designed and implemented.
+## 📊 Result Tracking
 
-The preprocessing pipeline includes methods for normalization, scaling, cleaning, and plotting. These operations were crucial for transforming raw data into a format suitable for input into the HCNN models. The logic for these preprocessing steps was carefully designed to ensure that the data fed into the network maintained its integrity and relevance for the modeling tasks.
+Every training run automatically generates a result directory containing:
 
-### Optimization for GPU and Apple Silicon
+* **Trained Models** (`.pth` files): Best performing checkpoint
+* **Epoch Loss Logs** (`epoch_losses.json`): Per-epoch training/validation loss
+* **Forecast Outputs** (`forecast_results_epoch_*.csv`): Predicted vs true values for each epoch
 
-To maximize computational efficiency, the codebase is optimized to run on both Compute Unified Device Architecture (CUDA-enabled) GPUs and Apple Silicon Metal Performance Shaders (MPS) devices. This optimization ensures that the training and evaluation processes can fully utilize the available hardware, significantly reducing the time required for model training, especially when dealing with large datasets and complex models. By supporting CUDA and MPS, the code provides flexibility in deployment across various hardware platforms, making it accessible for a wide range of users with different computational resources.
+## ⚙️ Preprocessing & Utilities
 
+The `data` and `data_prep` modules (now folded into `src/`) include:
+
+* `SlidingWindowDataset`, `InpTarg_TSDataset` for batching
+* `Normalization_Strategy` for scaling and centering
+* `contextwindow_testdata_generator` for creating calibration + forecast sequences
+
+## 🚀 GPU/MPS Optimization
+
+The code is compatible with:
+
+* **NVIDIA CUDA GPUs**
+* **Apple M Series with Metal (MPS)**
+
+Automatic device detection ensures optimal hardware acceleration for training and inference workflows.
