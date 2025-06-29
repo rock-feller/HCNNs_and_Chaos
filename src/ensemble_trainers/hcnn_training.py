@@ -1,6 +1,7 @@
 import pandas as pd
 import torch , os, csv
 import matplotlib.pyplot as plt
+from ..model_utils.custom_losses import LogCoshLoss
 # from .utils import  custom_fcts
 import torch.nn as nn
 import numpy as np
@@ -556,7 +557,7 @@ class HCNNEnsembleTrainer:
                             )
                             forecast = results.forecasts.squeeze(0)
                             val_loss = self.loss_fn(forecast, val_data).item()
-                            batch_val_loss_summary.append(val_loss)
+                            # batch_val_loss_summary.append(val_loss)
                             # epoch_val_losses.append(val_loss)
                         
                             member_loss_summary[f'member_{idx+1}'] = {'avg_train_loss':float(np.mean(batches_loss)),
