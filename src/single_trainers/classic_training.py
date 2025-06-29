@@ -5,6 +5,8 @@ import torch
 from tqdm import tqdm
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from ..model_utils.custom_losses import LogCoshLoss
+
 # import random
 # import warnings
 from ..model_utils.custom_losses import LogCoshLoss
