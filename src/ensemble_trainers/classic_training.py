@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import os , json
 import numpy as np
 import pandas as pd
@@ -6,6 +7,7 @@ from typing import List, Tuple, Optional, Literal,Dict
 from datetime import datetime
 from torch.utils.data import DataLoader
 
+from ..model_utils.custom_losses import LogCoshLoss
 
 from tqdm import tqdm
 
@@ -33,16 +35,18 @@ class EnsembleRNNTrainer:
     """
 
     def __init__(self,
-                 ensembles:Dict,
+                 ensembles:List,
                 #  optimizers: List[torch.optim.Optimizer],
                 # optimizer:str,
-                 loss_fn: torch.nn.Module,
+                #  loss_fn: torch.nn.Module,
+                 loss_fn: Literal["mse", "logcosh"]   =  "mse" ,
                  best_on: Literal['individual', 'median'] = 'individual',
                  variable_names: Optional[List[str]] = None):
 
         self.ensembles = ensembles
         # self.optimizer = optimizer
-        self.loss_fn = loss_fn
+        
+        self.loss_fn = nn.MSELoss() if loss_fn == "mse" else LogCoshLoss()
         self.best_on = best_on
         self.variable_names = variable_names or [f"var_{i+1}" for i in range(ensembles[0][f"member_1"].output_size)]
         # self.device = ensemble.models[0]._get_default_device()
@@ -1088,13 +1092,13 @@ class EnsembleLSTMTrainer:
                  ensembles:Dict,
                 #  optimizers: List[torch.optim.Optimizer],
                 # optimizer:str,
-                 loss_fn: torch.nn.Module,
+                 loss_fn: Literal["mse", "logcosh"]   =  "mse" ,
                  best_on: Literal['individual', 'median'] = 'individual',
                  variable_names: Optional[List[str]] = None):
 
         self.ensembles = ensembles
         # self.optimizer = optimizer
-        self.loss_fn = loss_fn
+        self.loss_fn = nn.MSELoss() if loss_fn == "mse" else LogCoshLoss()
         self.best_on = best_on
         self.variable_names = variable_names or [f"var_{i+1}" for i in range(ensembles[0][f"member_1"].output_size)]
         # self.device = ensemble.models[0]._get_default_device()
