@@ -284,7 +284,7 @@ class LSTMEnsemble:
     """
 
     def __init__(self, n_ensemble: int, input_size: int, hidden_size: int,
-                 output_size: int, s0_nature: str, train_s0: bool,
+                 output_size: int, s0_nature:  Literal['zeros_', 'random_'], train_s0: bool,
                  init_range: Tuple[float, float], ext_vars: Optional[int] = None,
                  n_layers: int=1 , optimizer:Literal['adam', 'sgd'] = 'adam',\
                     learning_rate: float = 1e-4):
