@@ -1,6 +1,7 @@
 """
 Partial Teacher Forcing (PTF) HCNN cell implementation.
 
+
 This module contains the PTF HCNN cell that incorporates partial teacher forcing
 via dropout scaling during training.
 """
