@@ -1,6 +1,7 @@
 """
 LSTM Formulation (LForm) HCNN cell implementation.
 
+
 This module contains the LSTM-inspired HCNN cell that introduces memory-preserving
 behavior using a learnable diagonal matrix for modulating long-term dependencies.
 """
