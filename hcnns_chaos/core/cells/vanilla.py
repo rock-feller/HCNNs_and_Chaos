@@ -1,6 +1,7 @@
 """
 Vanilla HCNN cell implementation.
 
+
 This module contains the basic Historical Consistent Neural Network (HCNN) cell
 that performs state-to-state mapping with teacher forcing mechanism support.
 """
