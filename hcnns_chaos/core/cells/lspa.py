@@ -1,6 +1,7 @@
 """
 Large Sparse (LSpa) HCNN cell implementation.
 
+
 This module contains the Large Sparse HCNN cell that supports structured sparsity
 for efficient computation in high-dimensional dynamical systems.
 """
