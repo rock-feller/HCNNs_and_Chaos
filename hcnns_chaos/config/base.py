@@ -1,5 +1,5 @@
 """
-Base configuration classes and utilities.
+Base configuration classes and utilities. 
 
 This module provides the foundation for the configuration system,
 including base classes, loading/saving utilities, and validation.
