@@ -4,8 +4,11 @@ from torch import nn
 from typing import Literal, Tuple, Optional
 # from torch.utils.tensorboard import SummaryWriter
 
-from .modules import vanilla_cell , ptf_cell, lstm_cell, LargeSparse_cell, CustomLinear
+from .modules import ptf_cell, lstm_cell, LargeSparse_cell, CustomLinear
 
+# Import from the new HCNN framework
+from hcnns_chaos.core.base import BaseHCNNModel, HCNNOutput, PTFHCNNOutput
+from hcnns_chaos.core.cells import VanillaHCNNCell
 
 from collections import namedtuple
 
@@ -37,7 +40,7 @@ HCNNLSpaForwardOutput = namedtuple(
 )
 
 
-class Vanilla_Model(nn.Module):
+class Vanilla_Model(BaseHCNNModel):
     """
     Wrapper Model for the Vanilla HCNN Cell.
 
@@ -124,71 +127,37 @@ class Vanilla_Model(nn.Module):
 
     def __init__(self, n_obs_vars: int, n_hid_vars: int,
                  s0_nature: Literal['zeros_', 'random_'],
-                 train_s0: bool, 
-                 init_range: Tuple[float, float] = (-0.75, 0.75), 
+                 train_s0: bool,
+                 init_range: Tuple[float, float] = (-0.75, 0.75),
                  n_ext_vars : Optional[int] = None):
-        
-        super(Vanilla_Model, self).__init__()
 
-        self.n_obs_vars = n_obs_vars
-        self.n_hid_vars = n_hid_vars
-        self.n_state_vars = self.n_hid_vars + self.n_obs_vars
-        self.init_range = init_range
+        # Call parent constructor first
+        super().__init__(
+            n_obs_vars=n_obs_vars,
+            n_hid_vars=n_hid_vars,
+            s0_nature=s0_nature,
+            train_s0=train_s0,
+            init_range=init_range,
+            n_ext_vars=n_ext_vars
+        )
 
-        self.s0_nature = s0_nature
-        self.train_s0 = train_s0
-       
+        # Initialize the VanillaHCNNCell
+        self.cell = VanillaHCNNCell(
+            n_obs_vars=self.n_obs_vars,
+            n_hid_vars=self.n_hid_vars,
+            init_range=self.init_range,
+            n_ext_vars=self.n_ext_vars
+        )
 
-        if n_ext_vars is not None:
+        # Generate model name for checkpointing
+        self.name = self._generate_model_name()
 
-            self.n_ext_vars = n_ext_vars
-
-            self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
-                                 n_hid_vars= self.n_hid_vars, 
-                                 init_range= self.init_range, 
-                                 n_ext_vars=n_ext_vars)
-            
-            self.name = self._generate_model_name(n_ext_vars=n_ext_vars)
-
-        else:
-
-            self.n_ext_vars = None
-            self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
-                                 n_hid_vars= self.n_hid_vars, 
-                                 init_range= self.init_range)
-            
-            self.name = self._generate_model_name()
-        
-
-
-
-        # self.cell = vanilla_cell(n_obs_vars = self.n_obs_vars, 
-        #                          n_hid_vars= self.n_hid_vars, 
-        #                          init_range= self.init_range)
-        
-        self.device = self.cell._get_default_device()
-        # self.name = self._generate_model_name()
-
-
-
-        if self.s0_nature.lower() == "zeros_":
-            s0 = torch.zeros(1, self.n_state_vars, device=self.device)
-        elif self.s0_nature.lower() == "random_":
-            low, high = self.init_range
-            s0 = torch.empty(1, self.n_state_vars, device=self.device).uniform_(low, high)
-        else:
-            raise ValueError("s0_nature must be either 'zeros_' or 'random_'")
-
-        # Make `s0` a trainable parameter (single vector, not repeated for batch size)
-        self.s0 = nn.Parameter(s0, requires_grad=self.train_s0)
-
-    def _generate_model_name(self, n_ext_vars: Optional[int] =None) -> str:
+    def _generate_model_name(self) -> str:
         """Generates a unique model name based on configuration."""
+        name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
 
-        if n_ext_vars is not None:
-            name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}_ext{n_ext_vars}"
-        else:
-            name = f"VanillaModel_obs{self.n_obs_vars}_hid{self.n_hid_vars}"
+        if self.n_ext_vars is not None:
+            name += f"_ext{self.n_ext_vars}"
 
         if self.s0_nature == "random_":
             name += f"_randInit{self.init_range[0]}to{self.init_range[1]}"
@@ -198,6 +167,11 @@ class Vanilla_Model(nn.Module):
             name += "_trainableS0"
         return name
 
+    @property
+    def model_type(self) -> str:
+        """Return the type of HCNN model."""
+        return "vanilla_hcnn"
+
     def initial_hidden_state(self) -> nn.Parameter:
         """
         Return the trainable initial hidden state.
@@ -206,9 +180,9 @@ class Vanilla_Model(nn.Module):
     
 
     def forward(self, data_window: torch.Tensor,
-                ext_data_window: Optional[torch.Tensor]=None ,
-                forecast_horizon: Optional[int] = None , 
-                future_externals: Optional[torch.Tensor]=None ) -> VanillaHCNNForwardOutput:
+                forecast_horizon: Optional[int] = None,
+                externals: Optional[torch.Tensor] = None,
+                future_externals: Optional[torch.Tensor] = None) -> HCNNOutput:
         """
         Executes a forward pass through the Vanilla HCNN model over a sequence of observations.
         Supports both teacher-forced training and optional auto-regressive forecasting.
@@ -264,192 +238,81 @@ class Vanilla_Model(nn.Module):
         """
 
         batch_size, seq_length, _ = data_window.size()
+        device = data_window.device
 
         # Initialize tensors for observed data
-        states = torch.zeros(batch_size, seq_length, self.n_state_vars, device=self.device)
-        expectations = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
-        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=self.device)
+        states = torch.zeros(batch_size, seq_length, self.n_state_vars, device=device)
+        expectations = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=device)
+        delta_terms = torch.zeros(batch_size, seq_length, self.n_obs_vars, device=device)
 
         # Use the same initial hidden state for all sequences in the batch
-        states[:, 0, :] = self.s0
+        # Expand s0 to match batch size and ensure it's on the correct device
+        s0_device = self.s0.to(device)
+        states[:, 0, :] = s0_device.expand(batch_size, -1)
 
-        if self.n_ext_vars is not None:
+        # Process observed data sequence
+        for t in range(seq_length - 1):
+            expectation, next_state, delta_term = self.cell(
+                state=states[:, t, :],
+                teacher_forcing=True,
+                observation=data_window[:, t, :],
+                externals=externals[:, t, :] if externals is not None else None
+            )
 
+            expectations[:, t, :] = expectation
+            states[:, t + 1, :] = next_state
+            delta_terms[:, t, :] = delta_term
 
-            if seq_length > 1:
+        # Final observed time step (no teacher forcing for last step)
+        last_expectation, _, last_delta_term = self.cell(
+            state=states[:, seq_length - 1, :],
+            teacher_forcing=True,
+            observation=data_window[:, seq_length - 1, :],
+            externals=externals[:, seq_length - 1, :] if externals is not None else None
+        )
 
-                # Process observed data
-                for t in range(seq_length - 1):
-                    expectation, next_state, delta_term = self.cell(
-                        state=states[:, t, :],
-                        teacher_forcing=True,
-                        observation=data_window[:, t, :],
-                        externals=ext_data_window[:, t, :] )
-                    
-                    expectations[:, t, :] = expectation
-                    states[:, t + 1, :] = next_state
-                    delta_terms[:, t, :] = delta_term
-
-                # Final observed time step
-
-                # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-                # expectations[:, seq_length - 1, :] = last_y_hat
-                # if ext_data_window is not None:
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                            self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
-            else:
-
-                                            
-                    # Use external variables for the last time step
-                    # 
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] + 
-                                          self.cell.B(ext_data_window[:,seq_length - 1, :]), self.cell.ConMat.T)
-                
-            # last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            #     # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
-                
-
-            # expectations[:, seq_length - 1, :] = last_y_hat
-            # delta_terms[:, seq_length - 1, :] = last_delta_term
-            # partial_delta_terms[:, seq_length - 1, :]=last_partial_delta_term
-        else:
-
-            if seq_length > 1:
-
-                # Process observed data
-                for t in range(seq_length - 1):
-                    expectation, next_state, delta_term = self.cell(
-                        state=states[:, t, :],
-                        teacher_forcing=True,
-                        observation=data_window[:, t, :] )
-                    
-                    expectations[:, t, :] = expectation
-                    states[:, t + 1, :] = next_state
-                    delta_terms[:, t, :] = delta_term
-
-                # Final observed time step
-
-                # last_y_hat = torch.matmul(states[:, seq_length - 1, :], self.cell.ConMat.T)
-                # expectations[:, seq_length - 1, :] = last_y_hat
-                # if ext_data_window is not None:
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
-            else:
-
-                                            
-                    # Use external variables for the last time step
-                    # 
-                last_y_hat = torch.matmul(states[:, seq_length - 1, :] , self.cell.ConMat.T)
-                
-        last_delta_term = data_window[:, seq_length - 1, :] - last_y_hat
-            # last_partial_delta_term = self.cell.ptf_dropout(prob)(last_delta_term)
-            
-
-        expectations[:, seq_length - 1, :] = last_y_hat
+        expectations[:, seq_length - 1, :] = last_expectation
         delta_terms[:, seq_length - 1, :] = last_delta_term
         # Initialize tensors for forecasts
         forecasts = None
         future_states = None
 
-        if forecast_horizon:
-            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=self.device)
-            future_states = torch.zeros(batch_size, forecast_horizon, self.n_state_vars, device=self.device)
-            teach_forc = torch.matmul(last_delta_term,self.cell.ConMat)
+        if forecast_horizon and forecast_horizon > 0:
+            forecasts = torch.zeros(batch_size, forecast_horizon, self.n_obs_vars, device=device)
+            future_states = torch.zeros(batch_size, forecast_horizon, self.n_state_vars, device=device)
 
-            r_state = states[:, 0, :] - teach_forc
-            next_state = self.cell.A(torch.tanh(r_state))
+            # Start forecasting from the last observed state
+            current_state = states[:, seq_length - 1, :].clone()
 
-            with torch.no_grad():
+            for t in range(forecast_horizon):
+                # Get external variables for this forecast step if available
+                ext_t = future_externals[:, t, :] if future_externals is not None else None
 
-                future_states[:, 0, :] = states[:, seq_length - 1, :]
+                # Forecast next step (no teacher forcing)
+                forecast, next_state, _ = self.cell(
+                    state=current_state,
+                    teacher_forcing=False,
+                    externals=ext_t
+                )
 
-                if self.n_ext_vars is not None:
-
-
-                # Use the last observed state as the starting point
+                forecasts[:, t, :] = forecast
+                future_states[:, t, :] = next_state
+                current_state = next_state
                     
 
-                    # Forecast future steps
-                    for t in range(1, forecast_horizon):
-                        forecast, next_state, _ = self.cell( state=future_states[:, t - 1, :],
-                                                            teacher_forcing=False , 
-                                                            externals = future_externals[:, t - 1, :] )
-                        
-                        forecasts[:, t - 1, :] = forecast
-                        future_states[:, t, :] = next_state
-
-                    forecasts[:,t] = torch.matmul(future_states[:, t, :] + self.cell.B(future_externals[:, t - 1, :] ), self.cell.ConMat.T)
-
-                else:
-
-                    # future_states[:, 0, :] = states[:, seq_length - 1, :]
-
-                    # Forecast future steps
-                    for t in range(1, forecast_horizon):
-                        
-                        forecast, next_state, _ = self.cell( state=future_states[:, t - 1, :],
-                                                            teacher_forcing=False )
-                        
-                        forecasts[:, t - 1, :] = forecast
-                        future_states[:, t, :] = next_state
-
-                    forecasts[:,t] = torch.matmul(future_states[:, t, :], self.cell.ConMat.T)
-                    
-
-        return VanillaHCNNForwardOutput( expectations=expectations, states=states, delta_terms=delta_terms, forecasts=forecasts, future_states=future_states )
+        return HCNNOutput(
+            expectations=expectations,
+            states=states,
+            delta_terms=delta_terms,
+            forecasts=forecasts,
+            future_states=future_states
+        )
 
 
-    # def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer, checkpoint_dir: str = "checkpoints"):
-    #     """Saves model checkpoint to specified directory if performance improves."""
-    #     os.makedirs(checkpoint_dir, exist_ok=True)
-    #     checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}_epoch{epoch}.pth")
-    #     torch.save({
-    #         "epoch": epoch,
-    #         "model_state_dict": self.state_dict(),
-    #         "optimizer_state_dict": optimizer.state_dict(),
-    #         "loss": loss
-    #     }, checkpoint_path)
-    #     print(f"✅ Checkpoint saved at {checkpoint_path}")
-
-    def save_checkpoint(self, epoch: int, loss: float, optimizer: torch.optim.Optimizer,
-                         checkpoint_dir: str = "checkpoints", cleanup: bool = False,add_stuffs:Optional[str]="") -> None:
-        """Saves model checkpoint. Optionally removes older ones."""
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
-        if cleanup:
-            patterns = [
-        os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch*.pth"),
-        os.path.join(checkpoint_dir, f"*{add_stuffs}_.csv")]
-            
-        for pattern in patterns:
-            old_files = glob.glob(pattern)
-            for f in old_files:
-                os.remove(f)
-                print(f"🗑️ Removed old checkpoint: {f}")
-
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
-        checkpoint_path = os.path.join(checkpoint_dir, f"{self.name}{add_stuffs}_epoch{epoch}.pth")
-
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": self.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "loss": loss
-        }, checkpoint_path)
-        print(f"✅ Checkpoint saved at {checkpoint_path}")
     def load_checkpoint(self, checkpoint_path: str, optimizer: Optional[torch.optim.Optimizer] = None):
         """Loads model checkpoint."""
-        if os.path.isfile(checkpoint_path):
-            checkpoint = torch.load(checkpoint_path)
-            self.load_state_dict(checkpoint["model_state_dict"])  # Load model parameters
-            if optimizer is not None:
-                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])  # Load optimizer state
-            epoch = checkpoint["epoch"]
-            loss = checkpoint["loss"]
-            print(f"Checkpoint loaded from {checkpoint_path}. Epoch: {epoch}, Loss: {loss}")
-            return epoch, loss
-        else:
-            raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}")
+        from hcnns_chaos.utils.checkpoints import load_checkpoint
+        return load_checkpoint(checkpoint_path, model=self, optimizer=optimizer)
 
 
 
