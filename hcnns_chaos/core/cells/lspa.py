@@ -9,7 +9,7 @@ for efficient computation in high-dimensional dynamical systems.
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple, Literal
-from ..base import BaseHCNNCell
+from ..base import BaseHCNNCell, CellOutput
 from ..layers.sparse import  CustomSparseLinear
 from ..layers.linear import CustomLinear
 
@@ -127,7 +127,7 @@ class LSpaHCNNCell(BaseHCNNCell):
         teacher_forcing: bool = False,
         observation: Optional[torch.Tensor] = None,
         externals: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> CellOutput:
         """
         Forward pass through the Large Sparse HCNN Cell.
 
@@ -203,14 +203,14 @@ class LSpaHCNNCell(BaseHCNNCell):
             # Compute next state using sparse transformation
             next_state = self.Sparse_A(torch.tanh(corrected_state)) + external_contribution
 
-            return expectation, next_state, delta_term
+            return CellOutput(expectation, next_state, delta_term, {})
 
         else:
             # No teacher forcing - standard forward pass
             r_state = torch.matmul(state, torch.as_tensor(self.Ide, device=state.device))
             next_state = self.Sparse_A(torch.tanh(r_state)) + external_contribution
 
-            return expectation, next_state, None
+            return CellOutput(expectation, next_state, None, {})
 
     def get_observation_matrix(self) -> torch.Tensor:
         """Get the observation matrix."""

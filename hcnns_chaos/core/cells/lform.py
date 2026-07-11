@@ -9,7 +9,7 @@ behavior using a learnable diagonal matrix for modulating long-term dependencies
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
-from ..base import BaseHCNNCell
+from ..base import BaseHCNNCell, CellOutput
 from ..layers import CustomLinear, DiagonalMatrix
 
 
@@ -124,7 +124,7 @@ class LFormHCNNCell(BaseHCNNCell):
         teacher_forcing: bool = False,
         observation: Optional[torch.Tensor] = None,
         externals: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> CellOutput:
         """
         Forward pass through the LSTM Formulation HCNN Cell.
 
@@ -204,7 +204,7 @@ class LFormHCNNCell(BaseHCNNCell):
             # Apply diagonal modulation and add to corrected state
             next_state = r_state + self.D(lstm_block) + external_contribution
 
-            return expectation, next_state, delta_term
+            return CellOutput(expectation, next_state, delta_term, {})
 
         else:
             # No teacher forcing - standard forward pass
@@ -214,7 +214,7 @@ class LFormHCNNCell(BaseHCNNCell):
             lstm_block = self.A(torch.tanh(r_state)) - r_state
             next_state = r_state + self.D(lstm_block) + external_contribution
 
-            return expectation, next_state, None
+            return CellOutput(expectation, next_state, None, {})
 
     def get_observation_matrix(self) -> torch.Tensor:
         """Get the observation matrix."""

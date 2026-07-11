@@ -9,7 +9,7 @@ via dropout scaling during training.
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
-from ..base import BaseHCNNCell
+from ..base import BaseHCNNCell, CellOutput
 from ..layers.linear import CustomLinear
 from ..layers.dropout import (
     
@@ -197,7 +197,7 @@ class PTFHCNNCell(BaseHCNNCell):
         teacher_forcing: bool = False,
         observation: Optional[torch.Tensor] = None,
         externals: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> CellOutput:
         """
         Forward pass through the Partial Teacher Forcing HCNN Cell.
 
@@ -279,14 +279,17 @@ class PTFHCNNCell(BaseHCNNCell):
             # Compute next state with correction
             next_state = self.A(torch.tanh(corrected_state)) + external_contribution
 
-            return expectation, next_state, delta_term, partial_delta_term
+            return CellOutput(
+                expectation, next_state, delta_term,
+                {"partial_delta_terms": partial_delta_term},
+            )
 
         else:
             # No teacher forcing - standard forward pass
             r_state = torch.matmul(state, torch.as_tensor(self.Ide, device=state.device))
             next_state = self.A(torch.tanh(r_state)) + external_contribution
 
-            return expectation, next_state, None, None
+            return CellOutput(expectation, next_state, None, {})
 
     def get_observation_matrix(self) -> torch.Tensor:
         """Get the observation matrix."""

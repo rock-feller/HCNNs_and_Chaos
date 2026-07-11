@@ -8,7 +8,7 @@ that performs state-to-state mapping with teacher forcing mechanism support.
 
 import torch
 from typing import Optional, Tuple
-from ..base import BaseHCNNCell
+from ..base import BaseHCNNCell, CellOutput
 from ..layers import CustomLinear
 
 
@@ -106,7 +106,7 @@ class VanillaHCNNCell(BaseHCNNCell):
         observation: Optional[torch.Tensor] = None,
         externals: Optional[torch.Tensor] = None,
 
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> CellOutput:
         """
         Forward pass through the Vanilla HCNN Cell.
 
@@ -185,7 +185,7 @@ class VanillaHCNNCell(BaseHCNNCell):
             # Compute next state with correction
             next_state = self.A(torch.tanh(corrected_state)) + external_contribution
 
-            return expectation, next_state, delta_term
+            return CellOutput(expectation, next_state, delta_term, {})
 
         else:
             # No teacher forcing - standard forward pass
@@ -195,7 +195,7 @@ class VanillaHCNNCell(BaseHCNNCell):
             # Compute next state
             next_state = self.A(torch.tanh(r_state)) + external_contribution
 
-            return expectation, next_state, None
+            return CellOutput(expectation, next_state, None, {})
 
     def get_observation_matrix(self) -> torch.Tensor:
         """Get the observation matrix."""

@@ -29,6 +29,16 @@ ClassicOutput = namedtuple(
     ["outputs", "hidden_states", "forecasts"]
 )
 
+# Unified per-step output returned by every HCNN cell. Keeping a single, common
+# signature across all variants lets the rollout loop live once in BaseHCNNModel.
+#   - expectation : predicted observation y_hat_t = C s_t          (batch, n_obs)
+#   - next_state  : s_{t+1}                                        (batch, n_state)
+#   - delta_term  : teacher-forcing error y_t - y_hat_t (or None)  (batch, n_obs)
+#   - extras      : dict of variant-specific tensors (e.g. PTF's
+#                   partial_delta_terms); {} for variants with none.
+CellOutput = namedtuple("CellOutput", ["expectation", "next_state", "delta_term", "extras"])
+CellOutput.__new__.__defaults__ = ({},)  # extras optional, defaults to empty dict
+
 
 class BaseHCNNCell(nn.Module, ABC):
     """
@@ -163,35 +173,129 @@ class BaseHCNNModel(nn.Module, ABC):
         else:
             self.register_buffer('s0', s0)
     
-    @abstractmethod
     def forward(
         self,
         data_window: torch.Tensor,
         forecast_horizon: Optional[int] = None,
         externals: Optional[torch.Tensor] = None,
-        **kwargs
+        future_externals: Optional[torch.Tensor] = None,
+        **cell_kwargs
     ) -> Union[HCNNOutput, PTFHCNNOutput]:
         """
-        Forward pass through the model.
-        
+        Generic HCNN forward pass shared by every variant.
+
+        The recurrence itself is delegated to ``self.cell`` (which must return a
+        :class:`CellOutput`); this method only orchestrates the two-phase rollout
+        that is identical across Vanilla / PTF / LForm / LSpa:
+
+        1. **Calibration** over the observed ``data_window`` with teacher forcing
+           (the cell sees the ground-truth observation at each step).
+        2. **Forecast** (optional) for ``forecast_horizon`` steps in autonomous
+           mode (``teacher_forcing=False``) - the model is fed only its own state,
+           so there is no target leakage.
+
+        Variant-specific outputs (e.g. PTF's ``partial_delta_terms``) are carried
+        through ``CellOutput.extras`` and assembled by :meth:`_pack_output`.
+
         Parameters
         ----------
         data_window : torch.Tensor
-            Input data window
+            Observed sequence, shape ``(batch, seq_len, n_obs_vars)``.
         forecast_horizon : Optional[int]
-            Number of steps to forecast
+            Number of autonomous steps to forecast. ``None``/0 -> no forecast.
         externals : Optional[torch.Tensor]
-            External variables
-        **kwargs
-            Model-specific parameters
-            
+            External inputs over the calibration window,
+            shape ``(batch, seq_len, n_ext_vars)``.
+        future_externals : Optional[torch.Tensor]
+            External inputs over the forecast window,
+            shape ``(batch, forecast_horizon, n_ext_vars)``.
+        **cell_kwargs
+            Extra keyword arguments forwarded verbatim to the cell.
+
         Returns
         -------
         Union[HCNNOutput, PTFHCNNOutput]
-            Model output
+            The variant's output named tuple (see :meth:`_pack_output`).
         """
-        pass
-        
+        batch_size, seq_len, _ = data_window.shape
+        device = data_window.device
+
+        current_state = self.s0.to(device).expand(batch_size, -1).clone()
+        states_list = [current_state]
+        expectations_list = []
+        delta_terms_list = []
+        extras_lists: Dict[str, list] = {}
+
+        # --- Calibration: teacher forcing over the observed window ---
+        for t in range(seq_len):
+            ext_t = externals[:, t, :] if externals is not None else None
+            co = self.cell(
+                state=current_state,
+                teacher_forcing=True,
+                observation=data_window[:, t, :],
+                externals=ext_t,
+                **cell_kwargs
+            )
+            expectations_list.append(co.expectation)
+            delta_terms_list.append(co.delta_term)
+            if co.extras:
+                for k, v in co.extras.items():
+                    extras_lists.setdefault(k, []).append(v)
+            # state[t] already recorded; advance to state[t+1] for t < seq_len-1
+            if t < seq_len - 1:
+                current_state = co.next_state
+                states_list.append(current_state)
+
+        states = torch.stack(states_list, dim=1)
+        expectations = torch.stack(expectations_list, dim=1)
+        delta_terms = torch.stack(delta_terms_list, dim=1)
+        extras = {k: torch.stack(v, dim=1) for k, v in extras_lists.items()}
+
+        # --- Forecast: autonomous rollout (no teacher forcing) ---
+        forecasts = None
+        future_states = None
+        if forecast_horizon and forecast_horizon > 0:
+            forecasts_list = []
+            future_states_list = []
+            current_state = states[:, seq_len - 1, :]
+            for t in range(forecast_horizon):
+                ext_f = future_externals[:, t, :] if future_externals is not None else None
+                co = self.cell(
+                    state=current_state,
+                    teacher_forcing=False,
+                    externals=ext_f,
+                    **cell_kwargs
+                )
+                forecasts_list.append(co.expectation)
+                future_states_list.append(co.next_state)
+                current_state = co.next_state
+            forecasts = torch.stack(forecasts_list, dim=1)
+            future_states = torch.stack(future_states_list, dim=1)
+
+        return self._pack_output(
+            expectations=expectations,
+            states=states,
+            delta_terms=delta_terms,
+            forecasts=forecasts,
+            future_states=future_states,
+            extras=extras,
+        )
+
+    def _pack_output(self, expectations, states, delta_terms, forecasts, future_states, extras):
+        """
+        Assemble the variant's output named tuple from the rolled-out tensors.
+
+        Default packs a :class:`HCNNOutput` (Vanilla / LForm / LSpa). Variants
+        with extra fields (e.g. PTF) override this to include them.
+        """
+        return HCNNOutput(
+            expectations=expectations,
+            states=states,
+            delta_terms=delta_terms,
+            forecasts=forecasts,
+            future_states=future_states,
+        )
+
     @property
     @abstractmethod
     def model_type(self) -> str:
