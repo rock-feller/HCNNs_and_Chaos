@@ -8,36 +8,56 @@ including Lorenz, Rössler, and other dynamical systems.
 import numpy as np
 import torch
 from scipy.integrate import odeint
-from typing import Tuple, Optional, Literal, List
-import sys
-import os
+from typing import Tuple, Optional, Literal, List, Callable
 
-# Add chaotic_data to path for importing systems
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-try:
-    from chaotic_data.systems import LorenzSolver
-except ImportError:
-    # Fallback implementation if import fails
+def _solve_ode(
+    func: Callable,
+    ics: Tuple[float, ...],
+    start: float,
+    stop: float,
+    time_grid: float,
+    burn_in: float = 0.0,
+) -> Tuple[torch.Tensor, np.ndarray]:
+    """
+    Integrate an ODE and (optionally) discard the initial transient.
+
+    Chaotic trajectories launched from an arbitrary initial condition spend some
+    time off the attractor before settling onto it. Training on - and computing
+    normalization statistics from - that transient contaminates the model. Set
+    ``burn_in`` (in time units) to integrate ``burn_in`` extra time up front and
+    drop it, so the returned trajectory lies on the attractor.
+
+    Returns ``(trajectories[float32, (n_main, dim)], time_array[(n_main,)])`` where
+    ``n_main == len(np.arange(start, stop, time_grid))``.
+    """
+    n_main = len(np.arange(start, stop, time_grid))
+    n_burn = int(round(burn_in / time_grid)) if burn_in > 0 else 0
+    total = n_burn + n_main
+    time_full = start + np.arange(total) * time_grid
+    states = odeint(func, list(ics), time_full)[n_burn:]
+    time_array = np.arange(start, stop, time_grid)[:len(states)]
+    return torch.tensor(states, dtype=torch.float32), time_array
+
+
+def LorenzSolver(
+    start: float,
+    stop: float,
+    ics: Tuple[float, float, float],
+    time_grid: float,
+    burn_in: float = 0.0,
+) -> Tuple[torch.Tensor, np.ndarray]:
+    """
+    Self-contained Lorenz solver (sigma=10, rho=28, beta=8/3) with optional burn-in.
+
+    Returns ``(trajectories, time_array)``.
+    """
     def lorenz_equations(state, t):
-        """Lorenz system equations."""
-        s, r, b = 10, 28, 2.667
+        s, r, b = 10.0, 28.0, 8.0 / 3.0
         x, y, z = state
-        x_dot = s * (y - x)
-        y_dot = r * x - y - x * z
-        z_dot = x * y - b * z
-        return x_dot, y_dot, z_dot
-    
-    def LorenzSolver(start: float, stop: float, ics: Tuple[float, float, float], 
-                     time_grid: float) -> Tuple[torch.Tensor, np.ndarray]:
-        """Solve Lorenz system."""
-        x0, y0, z0 = ics
-        state0 = [x0, y0, z0]
-        time_array = np.arange(start, stop, time_grid)
-        states = odeint(lorenz_equations, state0, time_array)
-        
-        trajectories = torch.tensor(states, dtype=torch.float32)
-        return trajectories, time_array
+        return s * (y - x), r * x - y - x * z, x * y - b * z
+
+    return _solve_ode(lorenz_equations, ics, start, stop, time_grid, burn_in)
 
 
 class ChaoticSystemGenerator:
@@ -54,18 +74,21 @@ class ChaoticSystemGenerator:
         stop: float = 20.0,
         time_grid: float = 0.01,
         initial_conditions: Tuple[float, float, float] = (1.0, 0.0, 1.25),
-        parameters: Optional[dict] = None
+        parameters: Optional[dict] = None,
+        burn_in: float = 0.0
     ) -> Tuple[torch.Tensor, np.ndarray]:
         """
         Generate Lorenz system trajectories.
-        
+
         Args:
             start: Start time
             stop: Stop time
             time_grid: Time step
             initial_conditions: Initial conditions (x0, y0, z0)
             parameters: System parameters (sigma, rho, beta)
-            
+            burn_in: Transient time (in time units) to discard from the front so
+                the returned trajectory lies on the attractor.
+
         Returns:
             Tuple of (trajectories, time_array)
             - trajectories: Shape (n_steps, 3)
@@ -73,7 +96,7 @@ class ChaoticSystemGenerator:
         """
         if parameters is None:
             parameters = {'sigma': 10, 'rho': 28, 'beta': 2.667}
-        
+
         def lorenz_with_params(state, t):
             x, y, z = state
             sigma, rho, beta = parameters['sigma'], parameters['rho'], parameters['beta']
@@ -81,14 +104,9 @@ class ChaoticSystemGenerator:
             y_dot = rho * x - y - x * z
             z_dot = x * y - beta * z
             return x_dot, y_dot, z_dot
-        
-        x0, y0, z0 = initial_conditions
-        state0 = [x0, y0, z0]
-        time_array = np.arange(start, stop, time_grid)
-        states = odeint(lorenz_with_params, state0, time_array)
-        
-        trajectories = torch.tensor(states, dtype=torch.float32)
-        return trajectories, time_array
+
+        return _solve_ode(lorenz_with_params, initial_conditions,
+                          start, stop, time_grid, burn_in)
     
     def generate_rossler(
         self,
@@ -96,24 +114,26 @@ class ChaoticSystemGenerator:
         stop: float = 100.0,
         time_grid: float = 0.01,
         initial_conditions: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-        parameters: Optional[dict] = None
+        parameters: Optional[dict] = None,
+        burn_in: float = 0.0
     ) -> Tuple[torch.Tensor, np.ndarray]:
         """
         Generate Rössler system trajectories.
-        
+
         Args:
             start: Start time
             stop: Stop time
             time_grid: Time step
             initial_conditions: Initial conditions (x0, y0, z0)
             parameters: System parameters (a, b, c)
-            
+            burn_in: Transient time (in time units) to discard from the front.
+
         Returns:
             Tuple of (trajectories, time_array)
         """
         if parameters is None:
             parameters = {'a': 0.2, 'b': 0.2, 'c': 5.7}
-        
+
         def rossler_equations(state, t):
             x, y, z = state
             a, b, c = parameters['a'], parameters['b'], parameters['c']
@@ -121,14 +141,9 @@ class ChaoticSystemGenerator:
             y_dot = x + a * y
             z_dot = b + z * (x - c)
             return x_dot, y_dot, z_dot
-        
-        x0, y0, z0 = initial_conditions
-        state0 = [x0, y0, z0]
-        time_array = np.arange(start, stop, time_grid)
-        states = odeint(rossler_equations, state0, time_array)
-        
-        trajectories = torch.tensor(states, dtype=torch.float32)
-        return trajectories, time_array
+
+        return _solve_ode(rossler_equations, initial_conditions,
+                          start, stop, time_grid, burn_in)
     
     def generate_chua(
         self,
@@ -136,45 +151,42 @@ class ChaoticSystemGenerator:
         stop: float = 100.0,
         time_grid: float = 0.01,
         initial_conditions: Tuple[float, float, float] = (0.1, 0.1, 0.1),
-        parameters: Optional[dict] = None
+        parameters: Optional[dict] = None,
+        burn_in: float = 0.0
     ) -> Tuple[torch.Tensor, np.ndarray]:
         """
         Generate Chua's circuit trajectories.
-        
+
         Args:
             start: Start time
             stop: Stop time
             time_grid: Time step
             initial_conditions: Initial conditions (x0, y0, z0)
             parameters: System parameters
-            
+            burn_in: Transient time (in time units) to discard from the front.
+
         Returns:
             Tuple of (trajectories, time_array)
         """
         if parameters is None:
             parameters = {'alpha': 15.6, 'beta': 28.0, 'm0': -1.143, 'm1': -0.714}
-        
+
         def chua_equations(state, t):
             x, y, z = state
             alpha = parameters['alpha']
             beta = parameters['beta']
             m0, m1 = parameters['m0'], parameters['m1']
-            
+
             # Chua's diode
             h = m1 * x + 0.5 * (m0 - m1) * (abs(x + 1) - abs(x - 1))
-            
+
             x_dot = alpha * (y - x - h)
             y_dot = x - y + z
             z_dot = -beta * y
             return x_dot, y_dot, z_dot
-        
-        x0, y0, z0 = initial_conditions
-        state0 = [x0, y0, z0]
-        time_array = np.arange(start, stop, time_grid)
-        states = odeint(chua_equations, state0, time_array)
-        
-        trajectories = torch.tensor(states, dtype=torch.float32)
-        return trajectories, time_array
+
+        return _solve_ode(chua_equations, initial_conditions,
+                          start, stop, time_grid, burn_in)
     
     def generate_system(
         self,
@@ -434,24 +446,20 @@ def generate_lorenz_data(
     start: float = 0.0,
     stop: float = 20.0,
     time_grid: float = 0.01,
-    ics: Tuple[float, float, float] = (1.0, 0.0, 1.25)
+    ics: Tuple[float, float, float] = (1.0, 0.0, 1.25),
+    burn_in: float = 0.0
 ) -> Tuple[torch.Tensor, np.ndarray]:
     """
     Generate Lorenz data using the original interface.
-    
+
     Args:
         start: Start time
         stop: Stop time
         time_grid: Time step
         ics: Initial conditions
-        
+        burn_in: Transient time to discard from the front.
+
     Returns:
         Tuple of (trajectories, time_array)
     """
-    try:
-        # Try to use the original LorenzSolver if available
-        return LorenzSolver(start, stop, ics, time_grid)
-    except:
-        # Fallback to our implementation
-        generator = ChaoticSystemGenerator()
-        return generator.generate_lorenz(start, stop, time_grid, ics)
+    return LorenzSolver(start, stop, ics, time_grid, burn_in)

@@ -14,53 +14,75 @@ from torch.utils.data import Dataset, DataLoader
 
 class NormalizationStrategy:
     """
-    Handles data normalization and denormalization for chaotic system data.
+    Mean-centering + scaling for chaotic-system data.
+
+    Transform:  ``scaled = scaling_factor * (data - mean)``.
+
+    IMPORTANT (leakage): the centering ``mean`` must be estimated on the TRAINING
+    split only and then applied to validation/test. Use the stateful
+    :meth:`fit` / :meth:`transform` / :meth:`inverse_transform` API for this - it
+    stores the fitted mean so the same statistics are reused everywhere:
+
+        norm = NormalizationStrategy()
+        train_scaled = norm.fit(train, scaling_factor=0.02).transform(train)
+        test_scaled  = norm.transform(test)          # uses TRAIN mean - no leakage
+        recovered    = norm.inverse_transform(train_scaled)
+
+    The older stateless :meth:`scale_to_normalize` / :meth:`scale_back_to_originals`
+    helpers are retained for backward compatibility, but they estimate the mean on
+    whatever array they are handed - only ever pass them the training split.
     """
-    
+
     def __init__(self):
         self.data_normalization = True
-    
+        self.mean_: Optional[torch.Tensor] = None
+        self.scaling_factor_: Optional[float] = None
+
+    # -- Stateful, leakage-safe API ---------------------------------------
+    def fit(self, train_data: torch.Tensor, scaling_factor: float) -> "NormalizationStrategy":
+        """Estimate the centering mean on the TRAINING split and store it."""
+        self.mean_ = train_data.mean(dim=0)
+        self.scaling_factor_ = scaling_factor
+        return self
+
+    def transform(self, data: torch.Tensor) -> torch.Tensor:
+        """Apply the fitted transform: ``scaling_factor * (data - train_mean)``."""
+        if self.mean_ is None or self.scaling_factor_ is None:
+            raise RuntimeError("NormalizationStrategy.transform called before fit().")
+        return self.scaling_factor_ * (data - self.mean_.to(data.device))
+
+    def fit_transform(self, train_data: torch.Tensor, scaling_factor: float) -> torch.Tensor:
+        return self.fit(train_data, scaling_factor).transform(train_data)
+
+    def inverse_transform(self, scaled_data: torch.Tensor) -> torch.Tensor:
+        """Invert the transform back to the original scale."""
+        if self.mean_ is None or self.scaling_factor_ is None:
+            raise RuntimeError("NormalizationStrategy.inverse_transform called before fit().")
+        return (scaled_data / self.scaling_factor_) + self.mean_.to(scaled_data.device)
+
+    # -- Stateless helpers (backward compatible; pass TRAIN only) ---------
     def scale_to_normalize(
-        self, 
-        data: torch.Tensor, 
+        self,
+        data: torch.Tensor,
         scaling_factor: float
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Normalize data around 0 and multiply by scaling factor.
-        
-        Formula: scaled_data = scaling_factor * (data - data_averages)
-        
-        Args:
-            data: Input tensor of shape (samples, features)
-            scaling_factor: Scaling factor for normalization
-            
-        Returns:
-            Tuple of (scaled_data, data_averages)
-            - scaled_data: Normalized data of shape (samples, features)
-            - data_averages: Mean values of shape (features,)
+        Stateless mean-center + scale. Returns ``(scaled_data, data_mean)``.
+
+        WARNING: estimates the mean on ``data`` itself - only pass the training
+        split, or you leak test statistics into training. Prefer fit/transform.
         """
         data_averages = data.mean(dim=0)
         scaled_data = scaling_factor * (data - data_averages)
-        
         return scaled_data, data_averages
-    
+
     def scale_back_to_originals(
-        self, 
-        scaled_data: torch.Tensor, 
+        self,
+        scaled_data: torch.Tensor,
         scaling_factor: float,
         data_averages: torch.Tensor
     ) -> np.ndarray:
-        """
-        Convert scaled data back to original scale.
-        
-        Args:
-            scaled_data: Normalized data of shape (samples, features)
-            scaling_factor: Original scaling factor used
-            data_averages: Original mean values of shape (features,)
-            
-        Returns:
-            Original scale data as numpy array
-        """
+        """Convert scaled data back to the original scale (numpy)."""
         original_data = (scaled_data / scaling_factor) + data_averages
         return original_data.detach().cpu().numpy()
 
@@ -119,7 +141,9 @@ class NoisificationStrategy:
         Returns:
             Noisy trajectories of same shape
         """
-        noise = torch.uniform(-noise_level, noise_level, trajectories.shape)
+        # torch has no torch.uniform; sample U(-noise_level, noise_level) correctly
+        noise = (torch.rand(trajectories.shape, device=trajectories.device,
+                            dtype=trajectories.dtype) * 2 - 1) * noise_level
         return trajectories + noise
 
 
@@ -138,11 +162,10 @@ class SlidingWindowDataset(Dataset):
         """
         self.data = data
         self.window_size = window_size
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() 
-            else "mps" if torch.backends.mps.is_available() 
-            else "cpu"
-        )
+        # Keep windows on CPU by default (standard for a Dataset); the DataLoader /
+        # training loop moves batches to the model's device. Auto-grabbing MPS/CUDA
+        # here forces the whole windowed tensor onto the accelerator up front.
+        self.device = data.device
         self.windowed_data = self._create_sliding_windows()
     
     def _create_sliding_windows(self) -> torch.Tensor:
@@ -283,40 +306,37 @@ def prepare_chaotic_data(
         Dictionary containing processed data and metadata
     """
     if device is None:
-        device = torch.device(
-            "cuda" if torch.cuda.is_available() 
-            else "mps" if torch.backends.mps.is_available() 
-            else "cpu"
-        )
-    
+        device = torch.device("cpu")
+
     # Move data to device
     raw_data = raw_data.to(device)
-    
-    # Normalize data
-    normalizer = NormalizationStrategy()
-    normalized_data, data_averages = normalizer.scale_to_normalize(
-        raw_data, scaling_factor
-    )
-    
-    # Add noise if requested
+
+    # --- Split FIRST, then fit normalization on TRAIN only (no leakage) ---
+    split_idx = int(len(raw_data) * train_ratio)
+    raw_train = raw_data[:split_idx]
+    raw_test = raw_data[split_idx:]
+
+    normalizer = NormalizationStrategy().fit(raw_train, scaling_factor)
+    data_averages = normalizer.mean_
+    train_data = normalizer.transform(raw_train)
+    test_data = normalizer.transform(raw_test)
+    # Full normalized series, reconstructed from the two splits (train stats only)
+    normalized_data = torch.cat([train_data, test_data], dim=0)
+
+    # Add noise if requested (random perturbation; applied post-split)
     if add_noise:
         noise_adder = NoisificationStrategy()
-        normalized_data = noise_adder.add_gaussian_noise(
-            normalized_data, noise_sigma
-        )
-    
-    # Split into train/test
-    split_idx = int(len(normalized_data) * train_ratio)
-    train_data = normalized_data[:split_idx]
-    test_data = normalized_data[split_idx:]
-    
+        train_data = noise_adder.add_gaussian_noise(train_data, noise_sigma)
+        test_data = noise_adder.add_gaussian_noise(test_data, noise_sigma)
+
     # Prepare for fully unfolded mode (add batch dimension)
     fully_unfolded_train = train_data.unsqueeze(0)  # [1, seq_len, features]
-    
+
     return {
         'raw_data': raw_data,
         'normalized_data': normalized_data,
         'data_averages': data_averages,
+        'normalizer': normalizer,
         'train_data': train_data,
         'test_data': test_data,
         'fully_unfolded_train': fully_unfolded_train,
