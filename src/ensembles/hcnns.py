@@ -81,7 +81,7 @@ class VanillaHCNNEnsemble:
             if self.optimizer_type == 'adam':
             
                 optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate)
-            elif optimizer == 'sgd':
+            elif self.optimizer_type == 'sgd':
             
                 optimizer = torch.optim.SGD(model.parameters(), lr=self.learning_rate)
 
