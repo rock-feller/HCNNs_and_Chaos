@@ -261,13 +261,14 @@ class DiagonalMatrix(nn.Linear):
         torch.Tensor
             Transformed output tensor
         """
-        # Enforce diagonal structure before forward pass
+        # Enforce diagonal structure before forward pass.
+        # Clamp FIRST, then mask: clamping with min=epsilon would otherwise lift the
+        # masked-to-zero off-diagonal entries up to epsilon (making the matrix
+        # not-quite-diagonal). Masking last guarantees exact zeros off the diagonal.
         with torch.no_grad():
-            self.weight.data *= self.diagonal_mask
-
-            # Ensure values stay in [0, 1] range with epsilon bounds
             epsilon = 1e-6
             self.weight.data.clamp_(min=epsilon, max=1.0 - epsilon)
+            self.weight.data *= self.diagonal_mask
 
         if verbose:
             print(f"Diagonal weights: {self.get_diagonal_values()}")
@@ -304,12 +305,10 @@ class DiagonalMatrix(nn.Linear):
         maintains its diagonal structure and value constraints.
         """
         with torch.no_grad():
-            # Apply diagonal mask
-            self.weight.data *= self.diagonal_mask
-
-            # Clamp values to [0, 1] with epsilon bounds for numerical stability
+            # Clamp first, then mask (see forward()): keeps off-diagonal exactly zero.
             epsilon = 1e-6
             self.weight.data.clamp_(min=epsilon, max=1.0 - epsilon)
+            self.weight.data *= self.diagonal_mask
 
     def get_structure_info(self) -> dict:
         """
