@@ -158,7 +158,7 @@ class HCNNEnsembleTrainer:
                 optimizer.zero_grad()
                 
                 # Forward pass
-                output = model(data_window=training_data, ext_data_window=externals)
+                output = model(data_window=training_data, externals=externals)
                 loss = self.loss_fn(output.expectations, training_data)
                 
                 # Backward pass
@@ -285,7 +285,7 @@ class HCNNEnsembleTrainer:
                 model.train()
                 optimizer.zero_grad()
                 
-                output = model(data_window=training_data, ext_data_window=externals)
+                output = model(data_window=training_data, externals=externals)
                 train_loss = self.loss_fn(output.expectations, training_data)
                 
                 train_loss.backward()
@@ -517,7 +517,7 @@ class HCNNEnsembleTrainer:
 
             for idx in range(self.ensemble.n_ensemble):
                 model = self.ensemble.get_model(idx)
-                output = model(data_window=test_data, ext_data_window=externals)
+                output = model(data_window=test_data, externals=externals)
                 loss = self.loss_fn(output.expectations, test_data).item()
 
                 individual_losses.append(loss)
@@ -530,7 +530,7 @@ class HCNNEnsembleTrainer:
             for method in aggregation_methods:
                 ensemble_output = self.ensemble(
                     data_window=test_data,
-                    ext_data_window=externals,
+                    externals=externals,
                     aggregation_method=method
                 )
                 ensemble_loss = self.loss_fn(ensemble_output.expectations, test_data).item()

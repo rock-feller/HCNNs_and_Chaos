@@ -4,205 +4,100 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**HCNNs and Chaos** is a PhD research project modeling chaotic dynamical systems using:
-- **HCNNs** (Historical Consistent Neural Networks) - Vanilla, PTF (Partial Teacher Forcing), LForm (LSTM Formulation), LSpa (Large Sparse)
-- **Classic RNNs and LSTMs**
+**HCNNs and Chaos** is a PhD research project modeling chaotic dynamical systems (Lorenz, Rössler, Rabinovich–Fabrikant) with:
+- **HCNNs** (Historical Consistent Neural Networks) — Vanilla, PTF (Partial Teacher Forcing), LForm (LSTM Formulation), LSpa (Large Sparse)
+- **Classic RNNs and LSTMs** (baselines)
 
-The codebase supports both single-model and ensemble training pipelines implemented in PyTorch with GPU/MPS optimization.
+HCNNs reconstruct the observed past with teacher forcing, then roll out autonomously to forecast. Implemented in PyTorch with CPU/CUDA/MPS support.
 
-## Repository Structure
+## Single source of truth: `hcnns_chaos/`
+
+**`hcnns_chaos/` is the one canonical package.** The former parallel `src/` tree has been removed (it was older, partially-migrated, and buggy). All new work goes in `hcnns_chaos/`. If you find references to `src.*` (e.g. in older notebook cells), they are stale — map them to `hcnns_chaos` per the table below.
 
 ```
-src/                              # Main unified modeling stack
-├── models/
-│   ├── classic.py               # RNN_Model, LSTM_Model
-│   └── HCNN/
-│       ├── hcnn_models.py       # Vanilla, PTF, LForm, LSpa model implementations
-│       └── modules.py           # Core HCNN module definitions
-├── ensembles/
-│   ├── classics.py              # RNN and LSTM ensemble classes
-│   └── hcnns.py                 # HCNN ensemble classes (all variants)
-├── single_trainers/
-│   ├── classic_training.py      # RNNTrainer (single RNN/LSTM)
-│   └── hcnn_training.py         # HCNNTrainer variants (Vanilla, PTF, LSpa, LForm)
-├── ensemble_trainers/
-│   ├── classic_training.py      # ClassicEnsembleTrainer
-│   └── hcnn_training.py         # HCNNEnsembleTrainer variants
-└── model_utils/
-    └── custom_losses.py         # Custom loss functions (Log-cosh, MSE, etc.)
+hcnns_chaos/
+├── core/
+│   ├── base.py                 # BaseHCNNCell, BaseHCNNModel (shared rollout), BaseEnsemble, CellOutput + output namedtuples
+│   ├── cells/                  # vanilla.py, ptf.py, lform.py, lspa.py — the recurrence per variant
+│   ├── layers/                 # linear.py (CustomLinear, DiagonalMatrix), sparse.py (CustomSparseLinear), dropout.py (PTF schedules)
+│   ├── models/                 # hcnn_models.py (Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model), classic_models.py (RNNModel, LSTMModel)
+│   ├── ensembles/              # hcnn_ensembles.py (generic _HCNNEnsembleBase + 4 variants), classic_ensembles.py
+│   └── training/               # hcnn_trainer.py (HCNNTrainer)
+├── utils/
+│   ├── data_generation.py      # chaotic-system generators + burn-in (canonical)
+│   ├── data_preprocessing.py   # NormalizationStrategy (fit/transform), SlidingWindowDataset, prepare_chaotic_data
+│   ├── ensemble_trainer.py     # HCNNEnsembleTrainer
+│   ├── device.py, checkpoints.py
+│   └── fully_unfolded_mode.py, abridged_mode.py  # alternative training modes (secondary)
+└── config/base.py              # YAML config scaffolding (skeleton)
 
-chaotic_data/                    # Chaotic system generators
-├── systems.py                   # LorenzSolver, other dynamical systems
-└── utils.py                     # Data utilities
-
-data_utils/                       # Data preprocessing and utilities
-├── preprocess.py                # Normalization, sliding windows, dataset classes
-├── custom_fcts.py               # Custom functions
-└── plottings.py                 # Plotting utilities
-
-test/                             # Unit and integration tests
-├── test_*.py                    # Model-specific tests (23 test files)
-├── modules.py                   # Test support modules
-└── *_comput_graph.py            # Computational graph visualizations
-
-hcnns_chaos/                      # Alternative/legacy implementation structure
-└── core/
-    ├── base.py                  # Base classes and configuration
-    ├── ensembles/               # Ensemble implementations
-    └── cells.py                 # HCNN cell implementations
+chaotic_data/systems.py         # DEPRECATED (notebook-facing) — thin/older solvers, now with burn_in; prefer hcnns_chaos.utils.data_generation
+data_utils/preprocess.py        # DEPRECATED (notebook-facing) — prefer hcnns_chaos.utils.data_preprocessing
+test/                           # legacy tests (define private copies — do NOT test real code); real suite lives in tests/
+tests/                          # canonical pytest suite that imports hcnns_chaos
 ```
 
-## Key Architecture Patterns
+## Key architecture (read `base.py` first)
 
-### 1. Model Hierarchy
-All models (single) inherit from a common base and output named tuples:
-- `VanillaHCNNForwardOutput` / `HCNNpTFForwardOutput` / etc.
-- Fields: `expectations`, `states`, `delta_terms`, `forecasts`, `future_states`
+### The rollout lives once in `BaseHCNNModel.forward`
+Every variant shares the same two-phase rollout — teacher-forced calibration over the observed window, then autonomous forecast. It is implemented **once** in `BaseHCNNModel.forward` ([core/base.py]). Each cell returns a unified `CellOutput(expectation, next_state, delta_term, extras)`; each model is a thin wrapper that (a) builds its cell and (b) optionally overrides `_pack_output` (PTF adds `partial_delta_terms` via `extras`). Do **not** reintroduce a per-model `forward`.
 
-### 2. Trainer Pattern
-Both `single_trainers/` and `ensemble_trainers/` follow similar interface:
-- `train_only()`: Train on training data, save best model by training loss
-- `train_validate()`: Use calibration + forecast windows for validation
-- Generate result directories with: trained models (`.pth`), loss logs (`epoch_losses.json`), forecast CSVs
+### The recurrence lives in the cells
+| Variant | Transition | Idea |
+|---|---|---|
+| Vanilla | `s_{t+1} = A·tanh(s_t − Cᵀδ_t)` | baseline |
+| PTF | dropout on `δ_t` before the correction | partial teacher forcing (6 schedules in `layers/dropout.py`) |
+| LForm | `s_{t+1} = r_t + D·(A·tanh(r_t) − r_t)`, `D` diagonal ∈(0,1) | gated residual / memory |
+| LSpa | `A_sparse·tanh(r_t)` | masked transition for scale |
 
-### 3. Data Pipeline
-- **Chaotic Systems**: `chaotic_data.systems.LorenzSolver()` generates trajectories
-- **Normalization**: `data_utils.preprocess.Normalization_Strategy()` scales/centers data
-- **Batching**: `SlidingWindowDataset`, `SlidingWindowDataLoader` for sequence windows
-- **Testing**: `contextwindow_testdata_generator()` creates calibration + forecast splits
+`δ_t = y_t − C·s_t` is the teacher-forcing correction; observation matrix `C = [I | 0]`.
 
-### 4. Ensemble Design
-Ensembles wrap N individual models and support:
-- Aggregation methods: `mean`, `median`, `weighted_mean`
-- Uncertainty quantification via prediction variance
-- Individual model access: `ensemble.get_model(i)`, `ensemble.get_all_models()`
-- Extended forecasting with `forecast_horizon` parameter
+### Device semantics (standard PyTorch)
+Layers build on the default device (CPU); call `model.to(device)` to move a whole model. Do **not** reintroduce auto-device detection inside layers (it previously split models across CPU/MPS).
 
-## Common Development Tasks
+### Ensembles
+`_HCNNEnsembleBase` wraps N members in an `nn.ModuleDict`. Aggregation (`mean`/`median`/`weighted_mean`, weights normalized) reduces over the member axis; `predict_with_uncertainty` returns mean/var + `model_agreement` for every variant. Pass `seed=` for reproducible member diversity.
 
-### Running Tests
+## Import map (old `src.*` → canonical)
+
+| Old (removed) | New |
+|---|---|
+| `from src.models.HCNN.hcnn_models import Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model` | `from hcnns_chaos.core.models.hcnn_models import ...` |
+| `from src.models.classic import RNN_Model, LSTM_Model` | `from hcnns_chaos.core.models.classic_models import RNNModel as RNN_Model, LSTMModel as LSTM_Model` |
+| `from src.single_trainers.hcnn_training import HCNNTrainer` | `from hcnns_chaos.core.training import HCNNTrainer` |
+| `from src.ensembles.hcnns import VanillaHCNNEnsemble, HCNNpTFEnsemble, HCNNLFormEnsemble, LSpaEnsemble` | `from hcnns_chaos.core.ensembles.hcnn_ensembles import VanillaHCNNEnsemble, PTFHCNNEnsemble, LFormHCNNEnsemble, LSpaHCNNEnsemble` |
+| `from src.ensembles.classics import RNNEnsemble, LSTMEnsemble` | `from hcnns_chaos.core.ensembles.classic_ensembles import RNNEnsemble, LSTMEnsemble` |
+| `from src.ensemble_trainers.hcnn_training import HCNNEnsembleTrainer` | `from hcnns_chaos.utils.ensemble_trainer import HCNNEnsembleTrainer` |
+| classic single/ensemble trainers (`RNNTrainer`, `EnsembleRNNTrainer`, `EnsembleLSTMTrainer`) | **no equivalent yet** — flagged in notebooks; port to `hcnns_chaos` when needed |
+
+## Environment & common tasks
+
+Conda env `hcnn_env` (Python 3.11, torch 2.x via pip, numpy/scipy/pandas/matplotlib/scikit-learn/pyyaml/tqdm/pytest). Note: `requirements.txt` is a full-system `pip freeze` (Linux/CUDA-specific) — do **not** `pip install -r` it on macOS; install the curated deps above.
+
 ```bash
-# Run all tests
-pytest test/
+# run the canonical test suite (import the real package)
+PYTHONPATH=. conda run -n hcnn_env python -m pytest tests/ -q
 
-# Run specific test
-pytest test/test_VanillaHCNN.py -v
-
-# Run test class or function
-pytest test/test_VanillaHCNN.py::TestVanillaHCNNModel -v
-pytest test/test_VanillaHCNN.py::test_forward_pass -v
+# end-to-end demo (leak-free Lorenz forecast)
+PYTHONPATH=. conda run -n hcnn_env python run_data_run_vanilla_model.py
 ```
 
-### Training a Single Model
-```bash
-python run_data_run_vanilla_model.py
-```
-The script demonstrates:
-- Loading Lorenz data via `chaotic_data.systems.LorenzSolver()`
-- Normalization with `Normalization_Strategy`
-- Creating sliding windows with `SlidingWindowDataset`
-- Training a Vanilla_Model or other HCNN variant
-
-### Key Imports Pattern
+### Instantiation
 ```python
-from src.models.HCNN import Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model
-from src.ensembles.hcnns import VanillaHCNNEnsemble, PTFHCNNEnsemble, LFormHCNNEnsemble, LSpaHCNNEnsemble
-from src.single_trainers.hcnn_training import HCNNTrainer
-from src.ensemble_trainers.hcnn_training import HCNNEnsembleTrainer
-
-from chaotic_data.systems import LorenzSolver
-from data_utils.preprocess import Normalization_Strategy, SlidingWindowDataset, SlidingWindowDataLoader
+from hcnns_chaos.core.models.hcnn_models import Vanilla_Model
+m = Vanilla_Model(n_obs_vars=3, n_hid_vars=10, s0_nature="random_", train_s0=True)
+out = m(data_window, forecast_horizon=500)          # out.expectations, out.forecasts, ...
+m = m.to("mps")                                      # standard device placement
 ```
 
-### Model Instantiation Pattern
-All HCNN models share similar constructor signatures:
-```python
-model = Vanilla_Model(
-    n_obs=3,                           # Number of observed variables
-    n_hid_vars=10,                     # Number of hidden variables
-    s0_nature='random_',               # Initial state: 'random_' or other
-    train_s0=False,                    # Whether to train initial state
-    batch_size=20,
-    forecast_horizon=500               # For forecasting
-)
+### Leakage-safe data protocol (always)
+1. generate with `burn_in` to discard the transient;
+2. **split train/test first**;
+3. `NormalizationStrategy().fit(train, scale)` then `.transform(train)` / `.transform(test)` — never fit on the full series;
+4. select models on a validation window that is **not** the final test set.
 
-# Forward pass
-predictions, states, delta_terms, forecasts, future_states = model(data_window)
-```
-
-### Ensemble Instantiation Pattern
-```python
-ensemble = VanillaHCNNEnsemble(
-    n_ensemble=5,
-    n_obs_vars=1,
-    n_hid_vars=10,
-    s0_nature='random_',
-    train_s0=True
-)
-
-# Predictions with aggregation
-output = ensemble(data_window, aggregation_method="mean")
-
-# Predictions with uncertainty
-result = ensemble.predict_with_uncertainty(data_window, return_individual=True)
-print(result['predictions_mean'], result['predictions_var'])
-```
-
-## HCNN Variants Overview
-
-| Variant | Use Case | Key Feature |
-|---------|----------|------------|
-| **Vanilla** | Baseline | Simplest historical consistent formulation |
-| **PTF** | Noisy data | Partial Teacher Forcing + dropout regularization |
-| **LForm** | Long-term deps | LSTM-inspired gating for improved memory |
-| **LSpa** | High-dim systems | Structured sparsity for scalability (100-200 vars) |
-
-## Important Notes
-
-### Device Handling
-Code auto-detects and optimizes for:
-- NVIDIA CUDA GPUs: `torch.cuda.is_available()`
-- Apple Metal (MPS): `torch.backends.mps.is_available()`
-- CPU fallback
-
-Check device initialization in trainer and model code if performance issues arise.
-
-### Data Shapes Convention
-- Input: `(batch_size, sequence_length, n_obs)` - Observed variables only
-- Hidden state: `(batch_size, n_hid_vars)` during forward pass
-- Full state (internal): `(batch_size, n_obs + n_hid_vars)`
-
-### Test File Organization
-Test files in `test/` directory include:
-- Core model tests: `test_VanillaHCNN.py`, `test_HCNNpTF.py`, `test_HCNNLForm.py`, `test_HCNNLSpa.py`
-- Module tests: `test_vanilla_hcnncell.py`, `test_ptf_hcnncell.py`, `test_sparsity_modules.py`
-- Integration tests: `test_use_diagonal_matrix.py`, `test_lstmformulation.py`
-- Computational graph visualizations: `vanillaCell_comput_graph.py`, etc.
-
-Tests use pytest framework with named tuples for assertion clarity.
-
-### Result Artifacts
-Training runs generate:
-- `result_dir/best_model.pth` - Best checkpoint
-- `result_dir/epoch_losses.json` - Per-epoch training/validation loss
-- `result_dir/forecast_results_epoch_*.csv` - Predictions vs ground truth
-
-### Legacy Code
-`hcnns_chaos/` contains alternative implementations and may be phased out. Prefer `src/` for new development.
-
-## Dependencies
-
-Key packages (see `requirements.txt`):
-- PyTorch 2.0.1+ (with torch, torchaudio, torchvision)
-- NumPy, SciPy, Pandas
-- Matplotlib, Plotly for visualization
-- Jupyter for notebook workflows
-- scikit-learn for utilities
-
-## Jupyter Notebooks
-
-Workflow notebooks in root directory:
-- `workflow_hcnns_ensembles.ipynb` - HCNN ensemble experiments
-- `workflow_rnn_lstm_fully_observables.ipynb` - RNN/LSTM baseline
-- `workflow_rnns_lstms_ensembles.ipynb` - Classic ensemble training
-- `workfow_hcnn_and_variants_fully_obsvervables.ipynb` - All HCNN variants
+## Notes for future work
+- Keep the rollout in `BaseHCNNModel`; keep device semantics standard; keep normalization fit-on-train.
+- `LSpa` sparsity is currently a masked *dense* matrix (correctness, not efficiency) — true sparse ops are a research direction.
+- Legacy `test/` tests private copies, not the real code; add new tests under `tests/`.
+- `config/` is a scaffold (no concrete configs yet).
