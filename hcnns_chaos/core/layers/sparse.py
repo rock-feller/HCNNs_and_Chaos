@@ -78,17 +78,15 @@ class CustomSparseLinear(nn.Linear):
         if mask_type not in ['non_obs_block', 'random_block']:
             raise ValueError(f"Unsupported mask_type: {mask_type}")
 
-        # Get device if not provided
-        if device is None:
-            device = self._get_default_device()
-
+        # Device follows standard PyTorch semantics (build on default device unless
+        # given); the caller places the whole model with ``.to(device)``. No
+        # auto-grab of MPS/CUDA (which used to split the model across devices).
         self.n_obs_vars = n_obs_vars
         self.n_hid_vars = n_hid_vars
         self.n_state_vars = n_hid_vars + n_obs_vars
         self.init_range = init_range
         self.mask_type = mask_type
         self.sparsity_ratio = sparsity_ratio
-        self.device = device
 
         super().__init__(
             in_features=self.n_state_vars,
@@ -105,18 +103,13 @@ class CustomSparseLinear(nn.Linear):
         # Register backward hook to maintain sparsity during training
         self._register_gradient_hook()
 
-    def _get_default_device(self) -> torch.device:
-        """Get the default device for computation."""
-        from ...utils.device import get_device
-        return get_device()
-
     def _create_sparsity_mask(self):
         """Create sparsity mask based on mask_type and sparsity ratio."""
         if self.sparsity_ratio == 0.0:
             # No sparsity - all ones mask
             mask = torch.ones(
                 self.n_state_vars, self.n_state_vars,
-                device=self.device, dtype=torch.float32
+                device=self.weight.device, dtype=self.weight.dtype
             )
         elif self.mask_type == 'random_block':
             # Random sparsity across entire matrix
@@ -132,15 +125,16 @@ class CustomSparseLinear(nn.Linear):
 
     def _create_random_mask(self) -> torch.Tensor:
         """Create random sparsity mask across entire weight matrix."""
+        dev, dt = self.weight.device, self.weight.dtype
         total_elements = self.n_state_vars * self.n_state_vars
         num_zeros = int(total_elements * self.sparsity_ratio)
 
         # Create mask with all ones
-        mask = torch.ones(total_elements, device=self.device, dtype=torch.float32)
+        mask = torch.ones(total_elements, device=dev, dtype=dt)
 
         # Randomly select indices to zero out
         if num_zeros > 0:
-            zero_indices = torch.randperm(total_elements, device=self.device)[:num_zeros]
+            zero_indices = torch.randperm(total_elements, device=dev)[:num_zeros]
             mask[zero_indices] = 0.0
 
         # Reshape to matrix form
@@ -154,44 +148,28 @@ class CustomSparseLinear(nn.Linear):
         [obs_to_obs,  obs_to_hid ]
         [hid_to_obs,  hid_to_hid ]
 
-        Sparsity is applied to obs_to_hid and hid_to_hid blocks.
-        obs_to_obs and hid_to_obs blocks remain dense.
+        Sparsity is applied to the obs_to_hid and hid_to_hid blocks (i.e. all
+        columns that map *into* hidden variables); obs_to_obs and hid_to_obs
+        remain dense. Built with vectorized tensor ops (no Python loops), so it
+        scales to the large state spaces LSpa targets.
         """
+        dev, dt = self.weight.device, self.weight.dtype
+        n, n_obs = self.n_state_vars, self.n_obs_vars
+
         # Start with all ones
-        mask = torch.ones(
-            self.n_state_vars, self.n_state_vars,
-            device=self.device, dtype=torch.float32
-        )
+        mask = torch.ones(n, n, device=dev, dtype=dt)
 
         if self.n_hid_vars > 0 and self.sparsity_ratio > 0.0:
-            # Calculate elements to sparsify (obs_to_hid + hid_to_hid blocks)
-            obs_to_hid_elements = self.n_obs_vars * self.n_hid_vars
-            hid_to_hid_elements = self.n_hid_vars * self.n_hid_vars
-            sparsifiable_elements = obs_to_hid_elements + hid_to_hid_elements
+            # Sparsifiable positions = all rows, hidden columns [n_obs:n]
+            # (obs_to_hid + hid_to_hid). Flatten their linear indices.
+            rows = torch.arange(n, device=dev).repeat_interleave(self.n_hid_vars)
+            cols = torch.arange(n_obs, n, device=dev).repeat(n)
+            flat_idx = rows * n + cols  # (n * n_hid_vars,)
 
-            num_zeros = int(sparsifiable_elements * self.sparsity_ratio)
-
+            num_zeros = int(flat_idx.numel() * self.sparsity_ratio)
             if num_zeros > 0:
-                # Create indices for obs_to_hid and hid_to_hid blocks
-                all_indices = []
-
-                # obs_to_hid block: rows [0:n_obs_vars], cols [n_obs_vars:n_state_vars]
-                for i in range(self.n_obs_vars):
-                    for j in range(self.n_obs_vars, self.n_state_vars):
-                        all_indices.append(i * self.n_state_vars + j)
-
-                # hid_to_hid block: rows [n_obs_vars:n_state_vars], cols [n_obs_vars:n_state_vars]
-                for i in range(self.n_obs_vars, self.n_state_vars):
-                    for j in range(self.n_obs_vars, self.n_state_vars):
-                        all_indices.append(i * self.n_state_vars + j)
-
-                # Randomly select indices to zero out
-                if len(all_indices) >= num_zeros:
-                    zero_positions = torch.randperm(len(all_indices), device=self.device)[:num_zeros]
-                    for pos in zero_positions:
-                        linear_idx = all_indices[pos]
-                        i, j = divmod(linear_idx, self.n_state_vars)
-                        mask[i, j] = 0.0
+                chosen = flat_idx[torch.randperm(flat_idx.numel(), device=dev)[:num_zeros]]
+                mask.view(-1)[chosen] = 0.0
 
         return mask
 
@@ -253,8 +231,7 @@ class CustomSparseLinear(nn.Linear):
             self.weight.data.clamp_(self.init_range[0], self.init_range[1])
 
             # Apply sparsity mask
-            mask_tensor = torch.as_tensor(self.sparsity_mask, dtype=torch.float32)
-            self.weight.data *= mask_tensor
+            self.weight.data *= self.sparsity_mask
 
             # Initialize bias if present
             if self.bias is not None:
@@ -277,8 +254,7 @@ class CustomSparseLinear(nn.Linear):
         # Apply sparsity mask to weights before forward pass
         # This ensures sparsity is maintained even if gradients somehow update sparse weights
         with torch.no_grad():
-            mask_tensor = torch.as_tensor(self.sparsity_mask, dtype=torch.float32)
-            self.weight.data *= mask_tensor
+            self.weight.data *= self.sparsity_mask
 
         return nn.functional.linear(input, self.weight, self.bias)
 
@@ -326,8 +302,7 @@ class CustomSparseLinear(nn.Linear):
         especially useful after optimizer steps.
         """
         with torch.no_grad():
-            mask_tensor = torch.as_tensor(self.sparsity_mask, dtype=torch.float32)
-            self.weight.data *= mask_tensor
+            self.weight.data *= self.sparsity_mask
 
     def get_effective_sparsity(self) -> float:
         """

@@ -55,10 +55,11 @@ class CustomLinear(nn.Linear):
         # Store init_range first
         self.init_range = init_range
 
-        # Get device if not provided
-        if device is None:
-            device = self._get_default_device()
-
+        # Standard PyTorch device semantics: build on the default device (CPU)
+        # unless an explicit device is passed, then let the caller place the whole
+        # model with ``.to(device)``. (Previously this layer auto-detected and
+        # grabbed MPS/CUDA at construction, which silently split a model across
+        # devices because the base model kept s0 on CPU.)
         super().__init__(
             in_features=in_features,
             out_features=out_features,
@@ -66,15 +67,8 @@ class CustomLinear(nn.Linear):
             device=device
         )
 
-        self.device = device
-
         # Initialize weights and biases with custom range
         self._initialize_parameters()
-
-    def _get_default_device(self) -> torch.device:
-        """Get the default device for computation."""
-        from ...utils.device import get_device
-        return get_device()
 
     def _initialize_parameters(self):
         """Initialize weights and bias with uniform distribution in init_range."""
@@ -158,20 +152,20 @@ class DiagonalMatrix(nn.Linear):
         bias: bool = False,
         init_mode: Literal['all_one', 'all_random'] = 'all_one',
         init_diag: Optional[float] = None,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        grad_clip: Optional[float] = 0.5
     ):
         # Validate inputs
         if init_mode not in ['all_one', 'all_random']:
             raise ValueError(f"init_mode must be 'all_one' or 'all_random', got {init_mode}")
 
-        if device is None:
-            device = self._get_default_device()
-
-        # Set attributes before calling super().__init__() to avoid issues with reset_parameters
+        # Set attributes before calling super().__init__() to avoid issues with reset_parameters.
+        # Device follows standard PyTorch semantics (build on default device unless
+        # given); no auto-grab of MPS/CUDA.
         self.n_features = n_features
         self.init_mode = init_mode
         self.init_diag = init_diag
-        self.device = device
+        self.grad_clip = grad_clip  # max grad-norm for the diagonal; None disables clipping
 
         super().__init__(
             in_features=n_features,
@@ -180,10 +174,10 @@ class DiagonalMatrix(nn.Linear):
             device=device
         )
 
-        # Create diagonal mask (1 on diagonal, 0 elsewhere)
+        # Create diagonal mask (1 on diagonal, 0 elsewhere) on the weight's device
         self.register_buffer(
             'diagonal_mask',
-            torch.eye(n_features, device=device, dtype=torch.float32),
+            torch.eye(n_features, device=self.weight.device, dtype=self.weight.dtype),
             persistent=False
         )
 
@@ -193,27 +187,23 @@ class DiagonalMatrix(nn.Linear):
         # Register backward hook to enforce diagonal structure and prevent NaNs
         self._register_gradient_hook()
 
-    def _get_default_device(self) -> torch.device:
-        """Get the default device for computation."""
-        from ...utils.device import get_device
-        return get_device()
-
     def _initialize_parameters(self):
         """Initialize diagonal matrix with specified initialization mode or init_diag value."""
         with torch.no_grad():
+            dev, dt = self.weight.device, self.weight.dtype
             # Zero out the entire weight matrix first
             self.weight.data.zero_()
 
             # If init_diag is specified, use it directly (for backward compatibility)
             if self.init_diag is not None:
                 diagonal_values = torch.full((self.n_features,), self.init_diag,
-                                           device=self.device, dtype=torch.float32)
+                                           device=dev, dtype=dt)
             elif self.init_mode == 'all_one':
                 # Set diagonal elements to 1.0
-                diagonal_values = torch.ones(self.n_features, device=self.device, dtype=torch.float32)
+                diagonal_values = torch.ones(self.n_features, device=dev, dtype=dt)
             elif self.init_mode == 'all_random':
                 # Set diagonal elements to random values in [0, 1]
-                diagonal_values = torch.rand(self.n_features, device=self.device, dtype=torch.float32)
+                diagonal_values = torch.rand(self.n_features, device=dev, dtype=dt)
             else:
                 raise ValueError(f"Unknown init_mode: {self.init_mode}")
 
@@ -230,11 +220,8 @@ class DiagonalMatrix(nn.Linear):
         """Register backward hook to enforce diagonal structure and prevent NaN values."""
         def gradient_hook(grad):
             if grad is not None:
-                # Convert mask to proper tensor type
-                mask_tensor = torch.as_tensor(self.diagonal_mask, dtype=grad.dtype, device=grad.device)
-
-                # Mask gradients to zero out off-diagonal elements
-                masked_grad = grad * mask_tensor
+                # Zero out off-diagonal gradients (keep the matrix diagonal)
+                masked_grad = grad * self.diagonal_mask.to(dtype=grad.dtype, device=grad.device)
 
                 # Prevent NaN and inf values
                 masked_grad = torch.where(
@@ -243,15 +230,15 @@ class DiagonalMatrix(nn.Linear):
                     torch.zeros_like(masked_grad)
                 )
 
-                # Conservative gradient clipping for diagonal elements
-                grad_norm = torch.norm(masked_grad)
-                max_grad_norm = 0.5  # Conservative threshold for diagonal matrices
-
-                if grad_norm > max_grad_norm:
-                    masked_grad = masked_grad * (max_grad_norm / (grad_norm + 1e-8))
+                # Optional gradient-norm clipping for the diagonal (configurable via
+                # grad_clip; None disables). Default 0.5 is conservative - relax it
+                # when studying the memory-gate dynamics.
+                if self.grad_clip is not None:
+                    grad_norm = torch.norm(masked_grad)
+                    if grad_norm > self.grad_clip:
+                        masked_grad = masked_grad * (self.grad_clip / (grad_norm + 1e-8))
 
                 # Note: Weight clamping is done in forward pass to avoid interfering with gradients
-
                 return masked_grad
             return grad
 
@@ -276,8 +263,7 @@ class DiagonalMatrix(nn.Linear):
         """
         # Enforce diagonal structure before forward pass
         with torch.no_grad():
-            mask_tensor = torch.as_tensor(self.diagonal_mask, dtype=torch.float32)
-            self.weight.data *= mask_tensor
+            self.weight.data *= self.diagonal_mask
 
             # Ensure values stay in [0, 1] range with epsilon bounds
             epsilon = 1e-6
@@ -319,8 +305,7 @@ class DiagonalMatrix(nn.Linear):
         """
         with torch.no_grad():
             # Apply diagonal mask
-            mask_tensor = torch.as_tensor(self.diagonal_mask, dtype=torch.float32)
-            self.weight.data *= mask_tensor
+            self.weight.data *= self.diagonal_mask
 
             # Clamp values to [0, 1] with epsilon bounds for numerical stability
             epsilon = 1e-6
