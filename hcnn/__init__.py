@@ -28,6 +28,7 @@ __author__ = "Rockefeller"
 from . import core
 from . import utils
 from . import config
+from . import baselines  # RNN/LSTM comparison models (not part of the HCNN method)
 
 # Single-model classes
 from .core.models.hcnn_models import (
@@ -36,13 +37,15 @@ from .core.models.hcnn_models import (
     LForm_Model,
     LSpa_Model,
 )
-from .core.models.classic_models import RNNModel, LSTMModel
 
 # Clean public aliases
 VanillaHCNN = Vanilla_Model
 PTFHCNN = PTF_Model
 LFormHCNN = LForm_Model
 LSpaHCNN = LSpa_Model
+
+# Baseline models / ensembles (see hcnn.baselines)
+from .baselines import RNNModel, LSTMModel, RNNEnsemble, LSTMEnsemble
 
 # Ensemble classes
 from .core.ensembles.hcnn_ensembles import (
@@ -51,10 +54,9 @@ from .core.ensembles.hcnn_ensembles import (
     LFormHCNNEnsemble,
     LSpaHCNNEnsemble,
 )
-from .core.ensembles.classic_ensembles import RNNEnsemble, LSTMEnsemble
 
 # Training
-from .core.training import HCNNTrainer
+from .core.training import HCNNTrainer, BaseTrainer, EnsembleTrainer
 
 # Utility functions
 from .utils.device import get_device, set_device, get_device_info
@@ -70,6 +72,7 @@ __all__ = [
     "core",
     "utils",
     "config",
+    "baselines",
     # HCNN models (historical names)
     "Vanilla_Model",
     "PTF_Model",
@@ -92,6 +95,8 @@ __all__ = [
     "LSTMEnsemble",
     # training
     "HCNNTrainer",
+    "BaseTrainer",
+    "EnsembleTrainer",
     # config
     "Config",
     "load_config",
