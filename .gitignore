@@ -19,3 +19,9 @@ __pycache__
 
 #Folders
 workflows/
+
+# Generated training/demo artifacts
+*.pth
+demo_checkpoints/
+checkpoints/
+demo_lorenz_forecast.png
