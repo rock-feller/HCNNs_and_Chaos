@@ -15,7 +15,7 @@ Ensemble of Vanilla HCNN models providing baseline ensemble performance.
 
 **Usage:**
 ```python
-from hcnns_chaos.core.ensembles import VanillaHCNNEnsemble
+from hcnn.core.ensembles import VanillaHCNNEnsemble
 
 ensemble = VanillaHCNNEnsemble(
     n_ensemble=5,
@@ -38,7 +38,7 @@ Ensemble of Partial Teacher Forcing HCNN models with advanced regularization.
 
 **Usage:**
 ```python
-from hcnns_chaos.core.ensembles import PTFHCNNEnsemble
+from hcnn.core.ensembles import PTFHCNNEnsemble
 
 ensemble = PTFHCNNEnsemble(
     n_ensemble=5,
@@ -62,7 +62,7 @@ Ensemble of LSTM Formulation HCNN models optimized for sequential processing.
 
 **Usage:**
 ```python
-from hcnns_chaos.core.ensembles import LFormHCNNEnsemble
+from hcnn.core.ensembles import LFormHCNNEnsemble
 
 ensemble = LFormHCNNEnsemble(
     n_ensemble=5,
@@ -84,7 +84,7 @@ Ensemble of Large Sparse HCNN models designed for scalability.
 
 **Usage:**
 ```python
-from hcnns_chaos.core.ensembles import LSpaHCNNEnsemble
+from hcnn.core.ensembles import LSpaHCNNEnsemble
 
 ensemble = LSpaHCNNEnsemble(
     n_ensemble=5,
@@ -177,7 +177,7 @@ future_states = forecast_output.future_states
 
 ### Basic Training
 ```python
-from hcnns_chaos.utils.fully_unfolded_mode import FullyUnfoldedTrainer
+from hcnn.utils.fully_unfolded_mode import FullyUnfoldedTrainer
 
 trainer = FullyUnfoldedTrainer(
     model=ensemble,
@@ -277,8 +277,8 @@ class EnsembleEarlyStopping:
 
 ```python
 import torch
-from hcnns_chaos.core.ensembles import VanillaHCNNEnsemble
-from hcnns_chaos.utils.fully_unfolded_mode import FullyUnfoldedTrainer
+from hcnn.core.ensembles import VanillaHCNNEnsemble
+from hcnn.utils.fully_unfolded_mode import FullyUnfoldedTrainer
 
 # 1. Create ensemble
 ensemble = VanillaHCNNEnsemble(

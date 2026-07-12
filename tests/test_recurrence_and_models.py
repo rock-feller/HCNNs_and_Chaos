@@ -1,5 +1,5 @@
 """
-Recurrence correctness + model rollout tests (against the REAL hcnns_chaos code).
+Recurrence correctness + model rollout tests (against the REAL hcnn code).
 
 The key test re-derives one Vanilla cell step independently from the cell's own
 weights and asserts the cell matches - a regression anchor for the recurrence.
@@ -7,11 +7,11 @@ weights and asserts the cell matches - a regression anchor for the recurrence.
 import pytest
 import torch
 
-from hcnns_chaos.core.base import CellOutput, HCNNOutput, PTFHCNNOutput
-from hcnns_chaos.core.cells import (
+from hcnn.core.base import CellOutput, HCNNOutput, PTFHCNNOutput
+from hcnn.core.cells import (
     VanillaHCNNCell, PTFHCNNCell, LFormHCNNCell, LSpaHCNNCell,
 )
-from hcnns_chaos.core.models.hcnn_models import (
+from hcnn.core.models.hcnn_models import (
     Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model,
 )
 

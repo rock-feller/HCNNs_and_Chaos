@@ -3,7 +3,7 @@ End-to-end demo: train a Vanilla HCNN to forecast the Lorenz system.
 
 Run from the repo root:  python run_data_run_vanilla_model.py
 
-This exercises the consolidated `hcnns_chaos` stack end to end, following the
+This exercises the consolidated `hcnn` stack end to end, following the
 leakage-safe protocol:
   1. generate a Lorenz trajectory with a burn-in transient discarded,
   2. split into train / test BEFORE fitting any statistics,
@@ -15,10 +15,10 @@ import torch
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from hcnns_chaos.utils.data_generation import LorenzSolver
-from hcnns_chaos.utils.data_preprocessing import NormalizationStrategy, SlidingWindowDataset
-from hcnns_chaos.core.models.hcnn_models import Vanilla_Model
-from hcnns_chaos.core.training.hcnn_trainer import HCNNTrainer
+from hcnn.utils.data_generation import LorenzSolver
+from hcnn.utils.data_preprocessing import NormalizationStrategy, SlidingWindowDataset
+from hcnn.core.models.hcnn_models import Vanilla_Model
+from hcnn.core.training.hcnn_trainer import HCNNTrainer
 
 torch.manual_seed(0)
 

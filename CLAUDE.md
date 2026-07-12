@@ -10,12 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HCNNs reconstruct the observed past with teacher forcing, then roll out autonomously to forecast. Implemented in PyTorch with CPU/CUDA/MPS support.
 
-## Single source of truth: `hcnns_chaos/`
+## Single source of truth: `hcnn/`
 
-**`hcnns_chaos/` is the one canonical package.** The former parallel `src/` tree has been removed (it was older, partially-migrated, and buggy). All new work goes in `hcnns_chaos/`. If you find references to `src.*` (e.g. in older notebook cells), they are stale — map them to `hcnns_chaos` per the table below.
+**`hcnn/` is the one canonical package.** The former parallel `src/` tree has been removed (it was older, partially-migrated, and buggy). All new work goes in `hcnn/`. If you find references to `src.*` (e.g. in older notebook cells), they are stale — map them to `hcnn` per the table below.
 
 ```
-hcnns_chaos/
+hcnn/
 ├── core/
 │   ├── base.py                 # BaseHCNNCell, BaseHCNNModel (shared rollout), BaseEnsemble, CellOutput + output namedtuples
 │   ├── cells/                  # vanilla.py, ptf.py, lform.py, lspa.py — the recurrence per variant
@@ -31,10 +31,10 @@ hcnns_chaos/
 │   └── fully_unfolded_mode.py, abridged_mode.py  # alternative training modes (secondary)
 └── config/base.py              # YAML config scaffolding (skeleton)
 
-chaotic_data/systems.py         # DEPRECATED (notebook-facing) — thin/older solvers, now with burn_in; prefer hcnns_chaos.utils.data_generation
-data_utils/preprocess.py        # DEPRECATED (notebook-facing) — prefer hcnns_chaos.utils.data_preprocessing
+chaotic_data/systems.py         # DEPRECATED (notebook-facing) — thin/older solvers, now with burn_in; prefer hcnn.utils.data_generation
+data_utils/preprocess.py        # DEPRECATED (notebook-facing) — prefer hcnn.utils.data_preprocessing
 test/                           # legacy tests (define private copies — do NOT test real code); real suite lives in tests/
-tests/                          # canonical pytest suite that imports hcnns_chaos
+tests/                          # canonical pytest suite that imports hcnn
 ```
 
 ## Key architecture (read `base.py` first)
@@ -62,13 +62,13 @@ Layers build on the default device (CPU); call `model.to(device)` to move a whol
 
 | Old (removed) | New |
 |---|---|
-| `from src.models.HCNN.hcnn_models import Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model` | `from hcnns_chaos.core.models.hcnn_models import ...` |
-| `from src.models.classic import RNN_Model, LSTM_Model` | `from hcnns_chaos.core.models.classic_models import RNNModel as RNN_Model, LSTMModel as LSTM_Model` |
-| `from src.single_trainers.hcnn_training import HCNNTrainer` | `from hcnns_chaos.core.training import HCNNTrainer` |
-| `from src.ensembles.hcnns import VanillaHCNNEnsemble, HCNNpTFEnsemble, HCNNLFormEnsemble, LSpaEnsemble` | `from hcnns_chaos.core.ensembles.hcnn_ensembles import VanillaHCNNEnsemble, PTFHCNNEnsemble, LFormHCNNEnsemble, LSpaHCNNEnsemble` |
-| `from src.ensembles.classics import RNNEnsemble, LSTMEnsemble` | `from hcnns_chaos.core.ensembles.classic_ensembles import RNNEnsemble, LSTMEnsemble` |
-| `from src.ensemble_trainers.hcnn_training import HCNNEnsembleTrainer` | `from hcnns_chaos.utils.ensemble_trainer import HCNNEnsembleTrainer` |
-| classic single/ensemble trainers (`RNNTrainer`, `EnsembleRNNTrainer`, `EnsembleLSTMTrainer`) | **no equivalent yet** — flagged in notebooks; port to `hcnns_chaos` when needed |
+| `from src.models.HCNN.hcnn_models import Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model` | `from hcnn.core.models.hcnn_models import ...` |
+| `from src.models.classic import RNN_Model, LSTM_Model` | `from hcnn.core.models.classic_models import RNNModel as RNN_Model, LSTMModel as LSTM_Model` |
+| `from src.single_trainers.hcnn_training import HCNNTrainer` | `from hcnn.core.training import HCNNTrainer` |
+| `from src.ensembles.hcnns import VanillaHCNNEnsemble, HCNNpTFEnsemble, HCNNLFormEnsemble, LSpaEnsemble` | `from hcnn.core.ensembles.hcnn_ensembles import VanillaHCNNEnsemble, PTFHCNNEnsemble, LFormHCNNEnsemble, LSpaHCNNEnsemble` |
+| `from src.ensembles.classics import RNNEnsemble, LSTMEnsemble` | `from hcnn.core.ensembles.classic_ensembles import RNNEnsemble, LSTMEnsemble` |
+| `from src.ensemble_trainers.hcnn_training import HCNNEnsembleTrainer` | `from hcnn.utils.ensemble_trainer import HCNNEnsembleTrainer` |
+| classic single/ensemble trainers (`RNNTrainer`, `EnsembleRNNTrainer`, `EnsembleLSTMTrainer`) | **no equivalent yet** — flagged in notebooks; port to `hcnn` when needed |
 
 ## Environment & common tasks
 
@@ -84,7 +84,7 @@ PYTHONPATH=. conda run -n hcnn_env python run_data_run_vanilla_model.py
 
 ### Instantiation
 ```python
-from hcnns_chaos.core.models.hcnn_models import Vanilla_Model
+from hcnn.core.models.hcnn_models import Vanilla_Model
 m = Vanilla_Model(n_obs_vars=3, n_hid_vars=10, s0_nature="random_", train_s0=True)
 out = m(data_window, forecast_horizon=500)          # out.expectations, out.forecasts, ...
 m = m.to("mps")                                      # standard device placement

@@ -3,7 +3,7 @@ HCNN model wrappers (Vanilla, PTF, LForm, LSpa).
 
 Every variant shares the exact same two-phase rollout (teacher-forced calibration
 over the observed window, then autonomous forecasting). That rollout lives once in
-:class:`hcnns_chaos.core.base.BaseHCNNModel.forward`; each model here only:
+:class:`hcnn.core.base.BaseHCNNModel.forward`; each model here only:
 
 - constructs its variant-specific cell, and
 - (if it has extra outputs, like PTF) overrides ``_pack_output``.
@@ -64,7 +64,7 @@ class PTF_Model(BaseHCNNModel):
     HCNN with Partial Teacher Forcing: dropout is applied to the correction term
     ``delta_t`` before it feeds back into the state, letting training interpolate
     between fully teacher-forced and autonomous behaviour. Six dropout schedules
-    are supported at the cell level (see :mod:`hcnns_chaos.core.layers.dropout`).
+    are supported at the cell level (see :mod:`hcnn.core.layers.dropout`).
 
     In addition to the standard fields, the output carries ``partial_delta_terms``
     (the dropout-masked delta), assembled here via :meth:`_pack_output`.

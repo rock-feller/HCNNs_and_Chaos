@@ -2,7 +2,7 @@
 Chaotic-system ODE solvers (Lorenz, Rössler, Rabinovich-Fabrikant).
 
 NOTE: the maintained data-generation code lives in
-``hcnns_chaos.utils.data_generation`` (self-contained, with the same burn-in
+``hcnn.utils.data_generation`` (self-contained, with the same burn-in
 support added here). This module is kept for the workflow notebooks that import
 ``chaotic_data.systems`` directly.
 

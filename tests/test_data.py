@@ -1,8 +1,8 @@
 """Data-pipeline correctness: burn-in, leakage-safe normalization, windows."""
 import torch
 
-from hcnns_chaos.utils.data_generation import LorenzSolver, ChaoticSystemGenerator
-from hcnns_chaos.utils.data_preprocessing import (
+from hcnn.utils.data_generation import LorenzSolver, ChaoticSystemGenerator
+from hcnn.utils.data_preprocessing import (
     NormalizationStrategy, NoisificationStrategy, SlidingWindowDataset, prepare_chaotic_data,
 )
 

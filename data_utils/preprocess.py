@@ -2,7 +2,7 @@
 DEPRECATED legacy data utilities (notebook-facing).
 
 The maintained, corrected data pipeline now lives in
-``hcnns_chaos.utils.data_preprocessing`` and ``hcnns_chaos.utils.data_generation``
+``hcnn.utils.data_preprocessing`` and ``hcnn.utils.data_generation``
 (leakage-safe fit/transform normalization, burn-in transient removal, fixed
 uniform noise). New code should import from there. This module is retained only
 so the existing workflow notebooks keep running; it will be removed once they are

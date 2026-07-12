@@ -4,10 +4,10 @@ import tempfile
 import torch
 from torch.utils.data import DataLoader
 
-from hcnns_chaos.utils.data_generation import LorenzSolver
-from hcnns_chaos.utils.data_preprocessing import NormalizationStrategy, SlidingWindowDataset
-from hcnns_chaos.core.models.hcnn_models import Vanilla_Model, PTF_Model
-from hcnns_chaos.core.training.hcnn_trainer import HCNNTrainer
+from hcnn.utils.data_generation import LorenzSolver
+from hcnn.utils.data_preprocessing import NormalizationStrategy, SlidingWindowDataset
+from hcnn.core.models.hcnn_models import Vanilla_Model, PTF_Model
+from hcnn.core.training.hcnn_trainer import HCNNTrainer
 
 
 def _data():

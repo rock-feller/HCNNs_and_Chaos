@@ -2,7 +2,7 @@
 import pytest
 import torch
 
-from hcnns_chaos.core.ensembles.hcnn_ensembles import (
+from hcnn.core.ensembles.hcnn_ensembles import (
     VanillaHCNNEnsemble, PTFHCNNEnsemble, LFormHCNNEnsemble, LSpaHCNNEnsemble,
 )
 

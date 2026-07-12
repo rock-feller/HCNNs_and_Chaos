@@ -1,7 +1,7 @@
 """Custom-layer invariants: diagonal gate and structured sparsity."""
 import torch
 
-from hcnns_chaos.core.layers import CustomLinear, DiagonalMatrix, CustomSparseLinear
+from hcnn.core.layers import CustomLinear, DiagonalMatrix, CustomSparseLinear
 
 
 def test_custom_linear_init_range_and_device():
