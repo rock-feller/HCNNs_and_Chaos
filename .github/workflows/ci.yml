@@ -1,0 +1,43 @@
+name: CI
+
+# Regression gate: run the canonical test suite on every push to master and on
+# every pull request. Keeps the HCNN recurrence, data pipeline (leakage/burn-in),
+# trainers, and ensembles from silently breaking.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install PyTorch (CPU wheel)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install project dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: PYTHONPATH=. pytest tests/ -q --durations=10
