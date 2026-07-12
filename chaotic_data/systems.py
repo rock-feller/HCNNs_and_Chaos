@@ -1,8 +1,32 @@
+"""
+Chaotic-system ODE solvers (Lorenz, Rössler, Rabinovich-Fabrikant).
+
+NOTE: the maintained data-generation code lives in
+``hcnn.utils.data_generation`` (self-contained, with the same burn-in
+support added here). This module is kept for the workflow notebooks that import
+``chaotic_data.systems`` directly.
+
+Each solver takes an optional ``burn_in`` (time units) that integrates that much
+extra time up front and discards it, so the returned trajectory starts on the
+attractor rather than on the initial-condition transient. ``burn_in=0.0`` (the
+default) reproduces the original behaviour exactly.
+"""
+
 import numpy as np
 from scipy.integrate import odeint
-from typing import Tuple
+from typing import Tuple, Callable
 import torch
 
+
+def _integrate(func: Callable, state0, start: float, stop: float,
+               time_grid: float, burn_in: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
+    """Integrate ``func`` and drop the first ``burn_in`` time units of transient."""
+    n_main = len(np.arange(start, stop, time_grid))
+    n_burn = int(round(burn_in / time_grid)) if burn_in > 0 else 0
+    time_full = start + np.arange(n_burn + n_main) * time_grid
+    states = odeint(func, list(state0), time_full)[n_burn:]
+    timegrid_array = np.arange(start, stop, time_grid)[:len(states)]
+    return states, timegrid_array
 
 
 def lorenz(state , t):
@@ -35,8 +59,8 @@ def lorenz(state , t):
     return x_dot, y_dot, z_dot
   
 def LorenzSolver(start :int, stop:int, ics : Tuple[float , float , float] ,
-                 time_grid : float)-> Tuple[np.ndarray , np.ndarray , np.ndarray, np.ndarray]:
-    
+                 time_grid : float, burn_in: float = 0.0)-> Tuple[np.ndarray , np.ndarray , np.ndarray, np.ndarray]:
+
     """
     Inputs:
             -  start: the start time of the lorenz system : int
@@ -59,10 +83,9 @@ def LorenzSolver(start :int, stop:int, ics : Tuple[float , float , float] ,
     Outputs shape: Tensor shape : (nber of points , 3, 1)
     """
     x0 , y0 , z0 = ics
-    
+
     state0 = [x0 , y0 , z0]
-    timegrid_array = np.arange(start, stop, time_grid)
-    states = odeint(lorenz, state0, timegrid_array)
+    states, timegrid_array = _integrate(lorenz, state0, start, stop, time_grid, burn_in)
     xs = states[:,0]
     ys = states[:,1]
     zs = states[:,2]
@@ -104,8 +127,8 @@ def rossler_eqs(state, t):
 
     return x_dot, y_dot, z_dot
 
-def RosslerSolver(start: int, stop: int, ics: Tuple[float, float, float], time_grid: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    
+def RosslerSolver(start: int, stop: int, ics: Tuple[float, float, float], time_grid: float, burn_in: float = 0.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+
     """
     Inputs:
             - start: the start time of the Rössler system : int
@@ -126,11 +149,9 @@ def RosslerSolver(start: int, stop: int, ics: Tuple[float, float, float], time_g
 
     """
     x0, y0, z0 = ics
-    
+
     state0 = [x0, y0, z0]
-    state0 = [x0 , y0 , z0]
-    timegrid_array = np.arange(start, stop, time_grid)
-    states = odeint(rossler_eqs, state0, timegrid_array)
+    states, timegrid_array = _integrate(rossler_eqs, state0, start, stop, time_grid, burn_in)
     xs = states[:,0]
     ys = states[:,1]
     zs = states[:,2]
@@ -170,9 +191,9 @@ def rabi_fabri_eqs(state, t):
 
     return x_dot, y_dot, z_dot
 
-def RabinovichFabrikantSolver(start: int, stop: int, ics: Tuple[float, float, float], 
-                              time_grid: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    
+def RabinovichFabrikantSolver(start: int, stop: int, ics: Tuple[float, float, float],
+                              time_grid: float, burn_in: float = 0.0) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+
     """
     Inputs:
             - start: the start time of the Rabinovich-Fabrikant system : int
@@ -193,8 +214,7 @@ def RabinovichFabrikantSolver(start: int, stop: int, ics: Tuple[float, float, fl
     """
     x0, y0, z0 = ics  # for chaotic trajs consider 0.1, 0.1, 0.1
     state0 = [x0, y0, z0]
-    timegrid_array = np.arange(start, stop, time_grid)
-    states = odeint(rabi_fabri_eqs, state0, timegrid_array)
+    states, timegrid_array = _integrate(rabi_fabri_eqs, state0, start, stop, time_grid, burn_in)
     xs = states[:,0]
     ys = states[:,1]
     zs = states[:,2]

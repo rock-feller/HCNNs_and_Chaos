@@ -1,3 +1,15 @@
+"""
+DEPRECATED legacy data utilities (notebook-facing).
+
+The maintained, corrected data pipeline now lives in
+``hcnn.utils.data_preprocessing`` and ``hcnn.utils.data_generation``
+(leakage-safe fit/transform normalization, burn-in transient removal, fixed
+uniform noise). New code should import from there. This module is retained only
+so the existing workflow notebooks keep running; it will be removed once they are
+migrated. NOTE: ``SlidingWindowDataset`` is defined twice below (historical); the
+second definition wins.
+"""
+
 import torch
 import numpy as np
 import random
@@ -5,8 +17,6 @@ from typing import Tuple , Literal , Union
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 import pandas as pd
-
-import random
 
 class Normalization_Strategy():
 
@@ -159,7 +169,7 @@ class SlidingWindowDataset(Dataset):
               """
 
             full_data = self.sliding_windows_shift_to(self.tensor_data, context_size +fcast_size )
-            random_window_id =  random.randint( 0, full_data.size(0))
+            random_window_id =  random.randint( 0, full_data.size(0) - 1)  # randint upper bound is inclusive
             context_window   = full_data[random_window_id,:context_size].squeeze(1)
             windowdata_toforecast = full_data[random_window_id,context_size:].squeeze(1)
             
@@ -283,7 +293,7 @@ class SlidingWindowDataset(Dataset):
             """Here you must only pass in the train dataset  as a tensor of shape [n_samples, n_features]"""
 
             full_data = self.sliding_windows_shift_to(self.data, context_size +fcast_size )
-            random_window_id =  random.randint( 0, full_data.size(0))
+            random_window_id =  random.randint( 0, full_data.size(0) - 1)  # randint upper bound is inclusive
             context_window   = full_data[random_window_id,:context_size].squeeze(1)
             windowdata_toforecast = full_data[random_window_id,context_size:].squeeze(1)
             

@@ -1,0 +1,18 @@
+# Development / CI dependencies for the `hcnn` package.
+#
+# NOTE: the repo's top-level requirements.txt is a full-system `pip freeze`
+# (Linux/CUDA/Debian-specific) and is NOT installable on macOS or in CI. Use THIS
+# file instead. Install a stable PyTorch first (platform-specific), e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU / CI
+#   pip3 install torch                                                    # local (CUDA/MPS)
+# then: pip install -r requirements-dev.txt
+
+torch>=2.0          # satisfied by the separate install above
+numpy>=1.23
+scipy>=1.9
+pandas>=2.0
+scikit-learn>=1.2
+matplotlib>=3.5
+pyyaml>=5.3
+tqdm>=4.60
+pytest>=7.0
