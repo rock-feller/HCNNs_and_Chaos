@@ -20,9 +20,13 @@ hcnn/
 │   ├── base.py                 # BaseHCNNCell, BaseHCNNModel (shared rollout), BaseEnsemble, CellOutput + output namedtuples
 │   ├── cells/                  # vanilla.py, ptf.py, lform.py, lspa.py — the recurrence per variant
 │   ├── layers/                 # linear.py (CustomLinear, DiagonalMatrix), sparse.py (CustomSparseLinear), dropout.py (PTF schedules)
-│   ├── models/                 # hcnn_models.py (Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model), classic_models.py (RNNModel, LSTMModel)
-│   ├── ensembles/              # hcnn_ensembles.py (generic _HCNNEnsembleBase + 4 variants), classic_ensembles.py
-│   └── training/               # hcnn_trainer.py (HCNNTrainer)
+│   ├── models/                 # hcnn_models.py (Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model)
+│   ├── ensembles/              # hcnn_ensembles.py (generic _HCNNEnsembleBase + 4 variants)
+│   └── training/               # base_trainer.py (BaseTrainer, EnsembleTrainer), hcnn_trainer.py (HCNNTrainer)
+├── baselines/                  # RNN/LSTM comparison models — NOT part of the HCNN method
+│   ├── models.py               # RNNModel, LSTMModel
+│   ├── ensembles.py            # RNNEnsemble, LSTMEnsemble
+│   └── trainers.py             # SequenceModelTrainer, SequenceEnsembleTrainer
 ├── utils/
 │   ├── data_generation.py      # chaotic-system generators + burn-in (canonical)
 │   ├── data_preprocessing.py   # NormalizationStrategy (fit/transform), SlidingWindowDataset, prepare_chaotic_data
@@ -63,12 +67,13 @@ Layers build on the default device (CPU); call `model.to(device)` to move a whol
 | Old (removed) | New |
 |---|---|
 | `from src.models.HCNN.hcnn_models import Vanilla_Model, PTF_Model, LForm_Model, LSpa_Model` | `from hcnn.core.models.hcnn_models import ...` |
-| `from src.models.classic import RNN_Model, LSTM_Model` | `from hcnn.core.models.classic_models import RNNModel as RNN_Model, LSTMModel as LSTM_Model` |
+| `from src.models.classic import RNN_Model, LSTM_Model` | `from hcnn.baselines import RNNModel, LSTMModel` |
 | `from src.single_trainers.hcnn_training import HCNNTrainer` | `from hcnn.core.training import HCNNTrainer` |
 | `from src.ensembles.hcnns import VanillaHCNNEnsemble, HCNNpTFEnsemble, HCNNLFormEnsemble, LSpaEnsemble` | `from hcnn.core.ensembles.hcnn_ensembles import VanillaHCNNEnsemble, PTFHCNNEnsemble, LFormHCNNEnsemble, LSpaHCNNEnsemble` |
-| `from src.ensembles.classics import RNNEnsemble, LSTMEnsemble` | `from hcnn.core.ensembles.classic_ensembles import RNNEnsemble, LSTMEnsemble` |
+| `from src.ensembles.classics import RNNEnsemble, LSTMEnsemble` | `from hcnn.baselines import RNNEnsemble, LSTMEnsemble` |
 | `from src.ensemble_trainers.hcnn_training import HCNNEnsembleTrainer` | `from hcnn.utils.ensemble_trainer import HCNNEnsembleTrainer` |
-| classic single/ensemble trainers (`RNNTrainer`, `EnsembleRNNTrainer`, `EnsembleLSTMTrainer`) | **no equivalent yet** — flagged in notebooks; port to `hcnn` when needed |
+| classic single trainer (`RNNTrainer`) | `from hcnn.baselines import SequenceModelTrainer` |
+| classic ensemble trainers (`EnsembleRNNTrainer`, `EnsembleLSTMTrainer`) | `from hcnn.baselines import SequenceEnsembleTrainer` |
 
 ## Environment & common tasks
 
