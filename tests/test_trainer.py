@@ -58,3 +58,17 @@ def test_restore_best_loads_the_selected_epoch():
     tr.restore_best()
     assert math.isclose(tr._validate(cal, val), best_val, rel_tol=1e-5)
 
+
+def test_per_epoch_mode_matches_full_batch_gradient():
+    """Batch-wise gradient accumulation == one backward on the mean loss."""
+    loader, _, _ = _data()
+    torch.manual_seed(0)
+    a = Vanilla_Model(n_obs_vars=3, n_hid_vars=6)
+    b = Vanilla_Model(n_obs_vars=3, n_hid_vars=6)
+    b.load_state_dict(a.state_dict())
+    ta = HCNNTrainer(a, backprop_mode="per_epoch", learning_rate=0.0, save_dir=tempfile.mkdtemp())
+    ta._run_train_epoch(loader, 0)
+    losses = [ta.loss_fn(b(data_window=batch).expectations, batch) for batch in loader]
+    (sum(losses) / len(losses)).backward()
+    for pa, pb in zip(a.parameters(), b.parameters()):
+        assert torch.allclose(pa.grad, pb.grad, atol=1e-6)

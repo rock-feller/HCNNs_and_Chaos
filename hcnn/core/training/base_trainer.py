@@ -109,15 +109,17 @@ class BaseTrainer:
                 batch_count += 1
 
         elif self.backprop_mode == "per_epoch":
+            # One optimizer step on the mean loss over all batches. Gradients are
+            # accumulated batch by batch, so only one batch's graph is alive at a time
+            # (summing the losses first kept every graph of the epoch in memory).
             self.optimizer.zero_grad()
-            accumulated = 0.0
+            n_batches = max(len(data_loader), 1)
             for batch in data_loader:
                 batch = batch.to(device)
                 loss = self._batch_loss(batch)
-                accumulated = accumulated + loss
+                (loss / n_batches).backward()
                 total_loss += loss.item()
                 batch_count += 1
-            (accumulated / max(batch_count, 1)).backward()
             if self.grad_clip is not None:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.optimizer.step()
