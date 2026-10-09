@@ -25,3 +25,9 @@ __pycache__
 demo_checkpoints/
 checkpoints/
 demo_lorenz_forecast.png
+tutorial_outputs/
+
+# Packaging
+*.egg-info/
+build/
+dist/

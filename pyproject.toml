@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hcnn"
+dynamic = ["version"]
+description = "Historical Consistent Neural Networks (HCNNs) for modeling and forecasting chaotic dynamical systems"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rockefeller" }]
+requires-python = ">=3.10"
+keywords = ["hcnn", "recurrent neural networks", "chaos", "dynamical systems", "forecasting", "pytorch"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# torch is listed without a platform pin: install the right wheel for your
+# machine first (CUDA / CPU / Apple MPS) if pip's default is not what you want.
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "pandas>=2.0",
+    "matplotlib>=3.5",
+    "pyyaml>=5.3",
+    "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+notebooks = ["jupyterlab", "ipywidgets", "jupytext"]
+
+[project.urls]
+Repository = "https://github.com/rock-feller/HCNNs_and_Chaos"
+
+[tool.setuptools.dynamic]
+version = { attr = "hcnn.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["hcnn*"]
+
+[tool.pytest.ini_options]
+# Only the canonical suite; the legacy test/ folder tests private copies of old code.
+testpaths = ["tests"]

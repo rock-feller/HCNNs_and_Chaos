@@ -1,5 +1,9 @@
 # HCNN Ensemble Implementations
 
+> **Layout note:** the generic `HCNNEnsemble` lives in `hcnn/core/ensembles/base.py`; each concrete
+> ensemble now lives with its architecture in `hcnn/architectures/<name>/ensemble.py`. The
+> `from hcnn.core.ensembles import ...` imports below still work.
+
 This module provides comprehensive ensemble implementations for all HCNN variants, enabling improved prediction accuracy and uncertainty quantification through model averaging and diversity.
 
 ## Available Ensemble Classes

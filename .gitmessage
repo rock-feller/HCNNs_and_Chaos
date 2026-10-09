@@ -1,0 +1,17 @@
+
+
+# <type>(<scope>): <imperative summary, <=50 chars, lowercase, no period>
+#
+# - <Past-tense verb> <what changed>
+# - <Past-tense verb> <what changed and why, if not obvious>
+#
+# <Why (required for math/arch/data/hparam/exp): motivation, equation,
+#  expected effect on results.>
+#
+# <Footers: Fixes #12 | Refs: #34, draft Eq. 4.2 | BREAKING CHANGE: ...>
+#
+# Research:    math arch data hparam exp
+# Engineering: feat fix perf refactor docs test build ci style chore
+# Scopes:      vanilla ptf lform lspa <arch> | core registry layers ensembles
+#              trainer | data lorenz rossler chua | baselines tutorials pkg ci
+# Full policy: COMMIT_POLICY.md     (enable once: git config commit.template .gitmessage)

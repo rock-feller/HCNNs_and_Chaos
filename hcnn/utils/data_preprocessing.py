@@ -352,3 +352,32 @@ def prepare_chaotic_data(
             'device': str(device)
         }
     }
+
+
+def train_val_test_split(
+    data: torch.Tensor,
+    train_ratio: float = 0.6,
+    val_ratio: float = 0.2,
+    scaling_factor: float = 0.02,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, NormalizationStrategy]:
+    """
+    Chronological train / validation / test split with leakage-safe normalization.
+
+    The series is split *first*; :class:`NormalizationStrategy` is then fitted on
+    the training part only and applied to all three. Use the validation part for
+    model selection (``train_and_validate``) and touch the test part once, at the
+    very end.
+
+    Returns ``(train, val, test, normalizer)``; ``normalizer.inverse_transform``
+    maps predictions back to the original scale.
+    """
+    if not (0 < train_ratio and 0 < val_ratio and train_ratio + val_ratio < 1):
+        raise ValueError("Need 0 < train_ratio, 0 < val_ratio and train_ratio + val_ratio < 1")
+    n = len(data)
+    i_train = int(n * train_ratio)
+    i_val = int(n * (train_ratio + val_ratio))
+    normalizer = NormalizationStrategy().fit(data[:i_train], scaling_factor)
+    train = normalizer.transform(data[:i_train])
+    val = normalizer.transform(data[i_train:i_val])
+    test = normalizer.transform(data[i_val:])
+    return train, val, test, normalizer

@@ -1,0 +1,115 @@
+name: Release
+
+# Continuous delivery. Pushing a version tag vX.Y.Z on master:
+#   1. checks the tag matches hcnn.__version__ and is on master (i.e. passed the CI gate);
+#   2. builds the sdist and wheel and runs the test suite against the installed wheel;
+#   3. publishes a GitHub Release with the distributions and generated notes;
+#   4. optionally publishes to PyPI - opt-in: configure a trusted publisher for this
+#      repository on pypi.org (environment "pypi"), then set the repository variable
+#      PUBLISH_TO_PYPI=true. No API token is stored anywhere.
+# See CONTRIBUTING.md, "Releasing".
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (full history, to check the tag is on master)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches hcnn.__version__ and is on master
+        run: |
+          version=$(python3 -c "import ast; print(next(n.value.value for n in ast.parse(open('hcnn/__init__.py').read()).body if isinstance(n, ast.Assign) and getattr(n.targets[0], 'id', '') == '__version__'))")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag  hcnn.__version__=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag v$tag does not match hcnn.__version__ = $version"; exit 1
+          fi
+          git fetch --quiet origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::Tagged commit is not on master - only gated code is released"; exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check --strict dist/*
+
+      - name: Test the built wheel
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install dist/*.whl pytest
+          # Run the suite from a directory without the source tree, so every `import hcnn`
+          # (tests and tutorials alike) resolves to the installed wheel.
+          mkdir /tmp/wheel-test
+          cp -r tests tutorials tools pyproject.toml /tmp/wheel-test/
+          cd /tmp/wheel-test
+          python -c "import hcnn; assert 'site-packages' in hcnn.__file__, hcnn.__file__"
+          python -m pytest -q
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  github-release:
+    name: GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "hcnn $GITHUB_REF_NAME"
+
+  pypi:
+    name: publish to PyPI
+    needs: build
+    if: vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/hcnn
+    permissions:
+      id-token: write  # trusted publishing (OIDC); no stored token
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,24 +1,30 @@
 """
-Core HCNN implementations and related neural network components.
+Shared HCNN framework - the part every architecture builds on.
 
-This module contains the fundamental building blocks for Historical Consistent
-Neural Networks including:
-- Base classes and interfaces
-- HCNN cell implementations (Vanilla, PTF, LForm, LSpa)
-- Model wrappers and ensemble implementations
-- Custom layers and utilities
+- :mod:`.base`       - ``BaseHCNNCell``, ``BaseHCNNModel`` (the one shared rollout),
+                       ``CellOutput`` and the output named tuples
+- :mod:`.registry`   - architecture registry (``build_model``, ``list_architectures``)
+- :mod:`.layers`     - reusable layers (``CustomLinear``, ``DiagonalMatrix``,
+                       ``CustomSparseLinear``, PTF dropout schedules)
+- :mod:`.ensembles`  - generic ``HCNNEnsemble``
+- :mod:`.training`   - ``BaseTrainer``, ``HCNNTrainer``, ``EnsembleTrainer``
+
+The architectures themselves live in :mod:`hcnn.architectures`. ``cells`` and
+``models`` remain here only as legacy import paths.
 """
 
 from . import base
-from . import cells
-from . import models
+from . import registry
 from . import layers
 from . import ensembles
+from . import cells
+from . import models
 
 __all__ = [
     "base",
-    "cells", 
-    "models",
+    "registry",
     "layers",
     "ensembles",
+    "cells",
+    "models",
 ]

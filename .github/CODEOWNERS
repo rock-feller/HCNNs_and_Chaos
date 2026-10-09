@@ -1,0 +1,24 @@
+# Who reviews what. GitHub requests a review from the owners of every path a PR
+# touches (enable "Require review from Code Owners" in branch protection to make
+# it mandatory). The last matching pattern wins.
+#
+# When you add an architecture, add a line for its folder, test and tutorial.
+
+# Default: the project maintainer
+*                                       @rock-feller
+
+# Shared framework: changes affect every architecture
+/hcnn/core/                             @rock-feller
+/tests/test_architecture_contract.py    @rock-feller
+/COMMIT_POLICY.md                       @rock-feller
+/.github/                               @rock-feller
+
+# Architectures: replace with the architecture's lead(s)
+/hcnn/architectures/vanilla/            @rock-feller
+/hcnn/architectures/ptf/                @rock-feller
+/hcnn/architectures/lform/              @rock-feller
+/hcnn/architectures/lspa/               @rock-feller
+/tests/architectures/test_vanilla.py    @rock-feller
+/tests/architectures/test_ptf.py        @rock-feller
+/tests/architectures/test_lform.py      @rock-feller
+/tests/architectures/test_lspa.py       @rock-feller

@@ -1,64 +1,68 @@
 """
-LSTM Formulation (LForm) HCNN cell implementation.
+Large Sparse (LSpa) HCNN cell implementation.
 
 
-This module contains the LSTM-inspired HCNN cell that introduces memory-preserving
-behavior using a learnable diagonal matrix for modulating long-term dependencies.
+This module contains the Large Sparse HCNN cell that supports structured sparsity
+for efficient computation in high-dimensional dynamical systems.
 """
 
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
-from ..base import BaseHCNNCell, CellOutput
-from ..layers import CustomLinear, DiagonalMatrix
+from typing import Optional, Tuple, Literal
+from ...core.base import BaseHCNNCell, CellOutput
+from ...core.layers.sparse import  CustomSparseLinear
+from ...core.layers.linear import CustomLinear
 
 
-class LFormHCNNCell(BaseHCNNCell):
+
+class LSpaHCNNCell(BaseHCNNCell):
     """
-    LSTM Formulation of the HCNN Cell (HCNN-LForm Cell).
+    Large Sparse HCNN Cell.
 
-    This module implements an LSTM-inspired variant of the Historical Consistent Neural Network (HCNN) cell.
-    It performs a non-linear residual update using a learnable diagonal matrix to regulate the embedding of 
-    residuals in the hidden state space. This structure is designed to support both autonomous dynamics and 
-    teacher-forced based training.
+    Implements a scalable variant of the Historical Consistent Neural Network (HCNN) cell
+    designed for high-dimensional dynamical systems using sparsity-aware nonlinear transformation.
+    It performs a state-to-state mapping using sparsity-aware nonlinear transformation
+    and produces outputs based on hidden states.
 
-    The key innovation is the LSTM-like dynamics combining:
-    1. Nonlinear transformations of the residual state (A)
-    2. Diagonal modulation (D) for memory conservation
-    3. Residual connections for improved gradient flow
-
-    The dynamics are:
-    - r_t = s_t - C^T * (y_true - y_pred) (if teacher forcing)
-    - lstm_block = A(tanh(r_t)) - r_t
-    - s_{t+1} = r_t + D(lstm_block)
+    This cell supports structured sparsity for efficient computation and also supports
+    teacher forcing during training. The key innovation is the use of a sparse transformation
+    matrix that can handle large state spaces efficiently.
 
     Parameters
     ----------
     n_obs_vars : int
-        Number of observed variables (i.e., the output dimensionality of the system)
+        Number of observed variables (i.e., the dimensionality of the observed state variables)
     n_hid_vars : int
-        Number of hidden variables (i.e., the internal state dimensionality)
+        Number of hidden variables (i.e., the dimensionality of the hidden state variables)
     init_range : Tuple[float, float], default=(-0.75, 0.75)
-        Range for uniform initialization of the linear transformation weights
-    init_diag : float, default=1.0
-        Initial value for diagonal elements of the diagonal matrix D
+        Range for uniform initialization of weights
+    bias : bool, default=False
+        Whether to include bias terms in linear transformations
+    mask_type : Literal['non_obs_block', 'random_block'], default='random_block'
+        Type of sparsity mask to apply:
+        - 'random_block': Applies uniform random sparsity over the entire weight matrix
+        - 'non_obs_block': Applies sparsity only to the non-observable block of the matrix
+    sparsity_ratio : float, default=0.0
+        Proportion of weights to set to zero. Must be in the range [0.0, 1.0]
     n_ext_vars : Optional[int], default=None
         Number of external variables
 
     Attributes
     ----------
-    A : CustomLinear
-        State transition matrix for nonlinear transformation
-    D : DiagonalMatrix
-        Learnable diagonal matrix for memory modulation
+    Sparse_A : CustomSparseLinear
+        Sparse state transition matrix with structured sparsity
     B : CustomLinear, optional
         External input matrix, only if n_ext_vars is provided
     ConMat : torch.Tensor
         Observation matrix that maps hidden states to observed outputs
     Ide : torch.Tensor
         Identity matrix for state operations
-    init_diag : float
-        Initial diagonal value for the D matrix
+    bias : bool
+        Whether bias terms are included
+    mask_type : str
+        Type of sparsity mask applied
+    sparsity_ratio : float
+        Sparsity ratio applied to the transformation matrix
     """
 
     def __init__(
@@ -66,26 +70,25 @@ class LFormHCNNCell(BaseHCNNCell):
         n_obs_vars: int,
         n_hid_vars: int,
         init_range: Tuple[float, float] = (-0.75, 0.75),
-        init_diag: float = 1.0,
+        bias: bool = False,
+        mask_type: Literal['non_obs_block', 'random_block'] = 'random_block',
+        sparsity_ratio: float = 0.0,
         n_ext_vars: Optional[int] = None
     ):
         super().__init__(n_obs_vars, n_hid_vars, init_range, n_ext_vars)
         
-        self.init_diag = init_diag
+        self.bias = bias
+        self.mask_type = mask_type
+        self.sparsity_ratio = sparsity_ratio
 
-        # State transition matrix A
-        self.A = CustomLinear(
-            in_features=self.n_state_vars,
-            out_features=self.n_state_vars,
-            bias=False,
-            init_range=self.init_range
-        )
-
-        # Diagonal matrix D for memory modulation
-        self.D = DiagonalMatrix(
-            n_features=self.n_state_vars,
-            bias=False,
-            init_diag=self.init_diag
+        # Sparse state transition matrix
+        self.Sparse_A = CustomSparseLinear(
+            n_obs_vars=self.n_obs_vars,
+            n_hid_vars=self.n_hid_vars,
+            bias=self.bias,
+            init_range=self.init_range,
+            sparsity_ratio=self.sparsity_ratio,
+            mask_type=self.mask_type
         )
 
         # External input matrix B (optional)
@@ -116,7 +119,7 @@ class LFormHCNNCell(BaseHCNNCell):
     @property
     def cell_type(self) -> str:
         """Return the type of HCNN cell."""
-        return "lform"
+        return "lspa"
 
     def forward(
         self,
@@ -126,7 +129,7 @@ class LFormHCNNCell(BaseHCNNCell):
         externals: Optional[torch.Tensor] = None
     ) -> CellOutput:
         """
-        Forward pass through the LSTM Formulation HCNN Cell.
+        Forward pass through the Large Sparse HCNN Cell.
 
         Parameters
         ----------
@@ -195,24 +198,17 @@ class LFormHCNNCell(BaseHCNNCell):
 
             # Apply teacher forcing correction
             teach_forc = torch.matmul(delta_term, torch.as_tensor(self.ConMat, device=delta_term.device))
-            r_state = state - teach_forc
+            corrected_state = state - teach_forc
 
-            # LSTM-like computation
-            # lstm_block = A(tanh(r_state)) - r_state (residual connection)
-            lstm_block = self.A(torch.tanh(r_state)) - r_state
-
-            # Apply diagonal modulation and add to corrected state
-            next_state = r_state + self.D(lstm_block) + external_contribution
+            # Compute next state using sparse transformation
+            next_state = self.Sparse_A(torch.tanh(corrected_state)) + external_contribution
 
             return CellOutput(expectation, next_state, delta_term, {})
 
         else:
             # No teacher forcing - standard forward pass
             r_state = torch.matmul(state, torch.as_tensor(self.Ide, device=state.device))
-
-            # LSTM-like computation without teacher forcing
-            lstm_block = self.A(torch.tanh(r_state)) - r_state
-            next_state = r_state + self.D(lstm_block) + external_contribution
+            next_state = self.Sparse_A(torch.tanh(r_state)) + external_contribution
 
             return CellOutput(expectation, next_state, None, {})
 
@@ -220,17 +216,17 @@ class LFormHCNNCell(BaseHCNNCell):
         """Get the observation matrix."""
         return torch.as_tensor(self.ConMat, device=next(self.parameters()).device)
 
-    def get_state_transition_matrix(self) -> torch.Tensor:
-        """Get the current state transition matrix weights."""
-        return self.A.weight
+    def get_sparse_transition_matrix(self) -> torch.Tensor:
+        """Get the current sparse state transition matrix weights."""
+        return self.Sparse_A.weight
 
-    def get_diagonal_matrix(self) -> torch.Tensor:
-        """Get the current diagonal matrix weights."""
-        return self.D.weight
+    def get_sparsity_info(self) -> dict:
+        """Get information about the current sparsity pattern."""
+        return self.Sparse_A.get_sparsity_info()
 
-    def get_diagonal_values(self) -> torch.Tensor:
-        """Get current diagonal values."""
-        return self.D.get_diagonal_values()
+    def visualize_sparsity_pattern(self) -> torch.Tensor:
+        """Get the current sparsity pattern for visualization."""
+        return self.Sparse_A.visualize_sparsity_pattern()
 
     def get_external_input_matrix(self) -> Optional[torch.Tensor]:
         """Get the external input matrix weights if available."""
@@ -238,8 +234,7 @@ class LFormHCNNCell(BaseHCNNCell):
 
     def reset_parameters(self):
         """Reset all parameters to their initial values."""
-        self.A.reset_parameters()
-        self.D.reset_parameters()
+        self.Sparse_A.reset_parameters()
         if self.B is not None:
             self.B.reset_parameters()
 
@@ -250,5 +245,7 @@ class LFormHCNNCell(BaseHCNNCell):
             f'n_hid_vars={self.n_hid_vars}, '
             f'n_ext_vars={self.n_ext_vars}, '
             f'init_range={self.init_range}, '
-            f'init_diag={self.init_diag}'
+            f'bias={self.bias}, '
+            f'mask_type={self.mask_type}, '
+            f'sparsity_ratio={self.sparsity_ratio}'
         )

@@ -5,10 +5,18 @@ A research package for modeling chaotic dynamical systems using Historical
 Consistent Neural Networks (HCNNs) and related variants.
 
 This package provides:
-- Core HCNN implementations (Vanilla, PTF, LForm, LSpa)
-- Training frameworks for single models and ensembles
-- Chaotic systems data generation and preprocessing
-- Utilities for research and experimentation
+- ``hcnn.core``          - the shared framework (base classes + the one rollout,
+                           registry, layers, generic ensemble, trainers)
+- ``hcnn.architectures`` - one self-contained package per HCNN variant
+                           (Vanilla, PTF, LForm, LSpa, ...)
+- ``hcnn.baselines``     - RNN/LSTM comparison models
+- ``hcnn.utils``         - chaotic-system data generation and preprocessing
+
+Any registered architecture can be built by name::
+
+    import hcnn
+    hcnn.list_architectures()            # ['lform', 'lspa', 'ptf', 'vanilla']
+    model = hcnn.build_model("lform", n_obs_vars=3, n_hid_vars=10)
 
 Public model classes are exposed under two equivalent names:
   Vanilla_Model  == VanillaHCNN
@@ -28,10 +36,22 @@ __author__ = "Rockefeller"
 from . import core
 from . import utils
 from . import config
+from . import architectures  # discovers + registers every architecture package
 from . import baselines  # RNN/LSTM comparison models (not part of the HCNN method)
 
+# Architecture registry
+from .core.registry import (
+    ArchitectureSpec,
+    register_architecture,
+    get_architecture,
+    list_architectures,
+    describe_architectures,
+    build_model,
+    build_ensemble,
+)
+
 # Single-model classes
-from .core.models.hcnn_models import (
+from .architectures import (
     Vanilla_Model,
     PTF_Model,
     LForm_Model,
@@ -48,7 +68,8 @@ LSpaHCNN = LSpa_Model
 from .baselines import RNNModel, LSTMModel, RNNEnsemble, LSTMEnsemble
 
 # Ensemble classes
-from .core.ensembles.hcnn_ensembles import (
+from .core.ensembles import HCNNEnsemble
+from .architectures import (
     VanillaHCNNEnsemble,
     PTFHCNNEnsemble,
     LFormHCNNEnsemble,
@@ -72,7 +93,16 @@ __all__ = [
     "core",
     "utils",
     "config",
+    "architectures",
     "baselines",
+    # registry
+    "ArchitectureSpec",
+    "register_architecture",
+    "get_architecture",
+    "list_architectures",
+    "describe_architectures",
+    "build_model",
+    "build_ensemble",
     # HCNN models (historical names)
     "Vanilla_Model",
     "PTF_Model",
@@ -87,6 +117,7 @@ __all__ = [
     "RNNModel",
     "LSTMModel",
     # ensembles
+    "HCNNEnsemble",
     "VanillaHCNNEnsemble",
     "PTFHCNNEnsemble",
     "LFormHCNNEnsemble",

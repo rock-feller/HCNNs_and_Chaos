@@ -1,54 +1,64 @@
 """
-Vanilla HCNN cell implementation.
+LSTM Formulation (LForm) HCNN cell implementation.
 
 
-This module contains the basic Historical Consistent Neural Network (HCNN) cell
-that performs state-to-state mapping with teacher forcing mechanism support.
+This module contains the LSTM-inspired HCNN cell that introduces memory-preserving
+behavior using a learnable diagonal matrix for modulating long-term dependencies.
 """
 
 import torch
+import torch.nn as nn
 from typing import Optional, Tuple
-from ..base import BaseHCNNCell, CellOutput
-from ..layers import CustomLinear
+from ...core.base import BaseHCNNCell, CellOutput
+from ...core.layers import CustomLinear, DiagonalMatrix
 
 
-class VanillaHCNNCell(BaseHCNNCell):
+class LFormHCNNCell(BaseHCNNCell):
     """
-    Vanilla HCNN Cell implementation.
+    LSTM Formulation of the HCNN Cell (HCNN-LForm Cell).
 
-    This class implements the basic version of the Historical Consistent Neural Network (HCNN) Cell.
-    It performs a state-to-state mapping and produces outputs extracted from hidden states.
-    It is designed to support teacher forcing during training.
+    This module implements an LSTM-inspired variant of the Historical Consistent Neural Network (HCNN) cell.
+    It performs a non-linear residual update using a learnable diagonal matrix to regulate the embedding of 
+    residuals in the hidden state space. This structure is designed to support both autonomous dynamics and 
+    teacher-forced based training.
 
-    The cell implements the following dynamics:
-    - State transition: s_{t+1} = A * tanh(s_t) + B * u_t (if external inputs)
-    - Observation: y_t = C * s_t (where C is the observation matrix)
-    - Teacher forcing: r_t = s_t - C^T * (y_pred - y_true) when teacherr forcing is enabled,
-    otherwise the cell operates in autonomous prediction mode: r_t = s_t.
+    The key innovation is the LSTM-like dynamics combining:
+    1. Nonlinear transformations of the residual state (A)
+    2. Diagonal modulation (D) for memory conservation
+    3. Residual connections for improved gradient flow
+
+    The dynamics are:
+    - r_t = s_t - C^T * (y_true - y_pred) (if teacher forcing)
+    - lstm_block = A(tanh(r_t)) - r_t
+    - s_{t+1} = r_t + D(lstm_block)
 
     Parameters
     ----------
     n_obs_vars : int
-        Number of observed variables (i.e., the dimensionality of the observed state variables)
+        Number of observed variables (i.e., the output dimensionality of the system)
     n_hid_vars : int
-        Number of hidden variables (i.e., the dimensionality of the hidden state variables)
+        Number of hidden variables (i.e., the internal state dimensionality)
     init_range : Tuple[float, float], default=(-0.75, 0.75)
-        Tuple specifying the range for uniform weight initialization in the linear modules
+        Range for uniform initialization of the linear transformation weights
+    init_diag : float, default=1.0
+        Initial value for diagonal elements of the diagonal matrix D
     n_ext_vars : Optional[int], default=None
-        Number of external variables (i.e., the dimensionality of the external variables)
+        Number of external variables
 
     Attributes
     ----------
     A : CustomLinear
-        State transition matrix (n_state_vars x n_state_vars)
+        State transition matrix for nonlinear transformation
+    D : DiagonalMatrix
+        Learnable diagonal matrix for memory modulation
     B : CustomLinear, optional
-        External input matrix (n_ext_vars x n_state_vars), only if n_ext_vars is provided
+        External input matrix, only if n_ext_vars is provided
     ConMat : torch.Tensor
         Observation matrix that maps hidden states to observed outputs
-        Shape: (n_obs_vars, n_state_vars)
     Ide : torch.Tensor
         Identity matrix for state operations
-        Shape: (n_state_vars, n_state_vars)
+    init_diag : float
+        Initial diagonal value for the D matrix
     """
 
     def __init__(
@@ -56,9 +66,12 @@ class VanillaHCNNCell(BaseHCNNCell):
         n_obs_vars: int,
         n_hid_vars: int,
         init_range: Tuple[float, float] = (-0.75, 0.75),
+        init_diag: float = 1.0,
         n_ext_vars: Optional[int] = None
     ):
         super().__init__(n_obs_vars, n_hid_vars, init_range, n_ext_vars)
+        
+        self.init_diag = init_diag
 
         # State transition matrix A
         self.A = CustomLinear(
@@ -66,6 +79,13 @@ class VanillaHCNNCell(BaseHCNNCell):
             out_features=self.n_state_vars,
             bias=False,
             init_range=self.init_range
+        )
+
+        # Diagonal matrix D for memory modulation
+        self.D = DiagonalMatrix(
+            n_features=self.n_state_vars,
+            bias=False,
+            init_diag=self.init_diag
         )
 
         # External input matrix B (optional)
@@ -80,7 +100,6 @@ class VanillaHCNNCell(BaseHCNNCell):
             self.B = None
 
         # Observation matrix (maps state to observations)
-        # ConMat = [I_obs, 0] where I_obs is identity matrix of size n_obs_vars
         self.register_buffer(
             'ConMat',
             torch.eye(self.n_obs_vars, self.n_state_vars),
@@ -97,18 +116,17 @@ class VanillaHCNNCell(BaseHCNNCell):
     @property
     def cell_type(self) -> str:
         """Return the type of HCNN cell."""
-        return "vanilla_hcnn_cell"
+        return "lform"
 
     def forward(
         self,
         state: torch.Tensor,
         teacher_forcing: bool = False,
         observation: Optional[torch.Tensor] = None,
-        externals: Optional[torch.Tensor] = None,
-
+        externals: Optional[torch.Tensor] = None
     ) -> CellOutput:
         """
-        Forward pass through the Vanilla HCNN Cell.
+        Forward pass through the LSTM Formulation HCNN Cell.
 
         Parameters
         ----------
@@ -121,7 +139,6 @@ class VanillaHCNNCell(BaseHCNNCell):
             Required when teacher_forcing=True
         externals : Optional[torch.Tensor], default=None
             External variables of shape (batch_size, n_ext_vars)
-            Only used if the cell was initialized with n_ext_vars
 
         Returns
         -------
@@ -153,9 +170,8 @@ class VanillaHCNNCell(BaseHCNNCell):
                     f"Expected {self.n_ext_vars} external variables, "
                     f"got {externals.shape[-1]}"
                 )
-            # self.B is guaranteed to be not None when n_ext_vars is not None
-            assert self.B is not None, "B should not be None when n_ext_vars is provided"
-            external_contribution = self.B(externals)
+            if self.B is not None:
+                external_contribution = self.B(externals)
         elif externals is not None:
             raise ValueError(
                 "External variables provided but cell doesn't support them. "
@@ -178,22 +194,25 @@ class VanillaHCNNCell(BaseHCNNCell):
             delta_term = observation - expectation
 
             # Apply teacher forcing correction
-            # Correction is applied by subtracting C^T * delta from state
             teach_forc = torch.matmul(delta_term, torch.as_tensor(self.ConMat, device=delta_term.device))
-            corrected_state = state - teach_forc
+            r_state = state - teach_forc
 
-            # Compute next state with correction
-            next_state = self.A(torch.tanh(corrected_state)) + external_contribution
+            # LSTM-like computation
+            # lstm_block = A(tanh(r_state)) - r_state (residual connection)
+            lstm_block = self.A(torch.tanh(r_state)) - r_state
+
+            # Apply diagonal modulation and add to corrected state
+            next_state = r_state + self.D(lstm_block) + external_contribution
 
             return CellOutput(expectation, next_state, delta_term, {})
 
         else:
             # No teacher forcing - standard forward pass
-            # Apply identity transformation to state (for consistency)
             r_state = torch.matmul(state, torch.as_tensor(self.Ide, device=state.device))
 
-            # Compute next state
-            next_state = self.A(torch.tanh(r_state)) + external_contribution
+            # LSTM-like computation without teacher forcing
+            lstm_block = self.A(torch.tanh(r_state)) - r_state
+            next_state = r_state + self.D(lstm_block) + external_contribution
 
             return CellOutput(expectation, next_state, None, {})
 
@@ -205,6 +224,14 @@ class VanillaHCNNCell(BaseHCNNCell):
         """Get the current state transition matrix weights."""
         return self.A.weight
 
+    def get_diagonal_matrix(self) -> torch.Tensor:
+        """Get the current diagonal matrix weights."""
+        return self.D.weight
+
+    def get_diagonal_values(self) -> torch.Tensor:
+        """Get current diagonal values."""
+        return self.D.get_diagonal_values()
+
     def get_external_input_matrix(self) -> Optional[torch.Tensor]:
         """Get the external input matrix weights if available."""
         return self.B.weight if self.B is not None else None
@@ -212,6 +239,7 @@ class VanillaHCNNCell(BaseHCNNCell):
     def reset_parameters(self):
         """Reset all parameters to their initial values."""
         self.A.reset_parameters()
+        self.D.reset_parameters()
         if self.B is not None:
             self.B.reset_parameters()
 
@@ -221,5 +249,6 @@ class VanillaHCNNCell(BaseHCNNCell):
             f'n_obs_vars={self.n_obs_vars}, '
             f'n_hid_vars={self.n_hid_vars}, '
             f'n_ext_vars={self.n_ext_vars}, '
-            f'init_range={self.init_range}'
+            f'init_range={self.init_range}, '
+            f'init_diag={self.init_diag}'
         )
