@@ -33,3 +33,13 @@ def test_non_obs_block_keeps_observed_columns_dense():
     W = m.get_sparse_transition_matrix()
     assert torch.count_nonzero(W[:, :N_OBS]) == N_STATE * N_OBS
 
+
+def test_old_checkpoints_without_mask_still_load():
+    """Pre-fix checkpoints had no sparsity_mask; it is recovered from the zero pattern."""
+    a = LSpa_Model(n_obs_vars=N_OBS, n_hid_vars=N_HID, sparsity_ratio=0.5).eval()
+    old_style = {k: v for k, v in a.state_dict().items() if not k.endswith("sparsity_mask")}
+    b = LSpa_Model(n_obs_vars=N_OBS, n_hid_vars=N_HID, sparsity_ratio=0.5).eval()
+    b.load_state_dict(old_style)
+    x = torch.randn(2, 6, N_OBS)
+    with torch.no_grad():
+        assert torch.allclose(a(x, forecast_horizon=4).forecasts, b(x, forecast_horizon=4).forecasts)

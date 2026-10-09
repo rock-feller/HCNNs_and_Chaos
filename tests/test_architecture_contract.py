@@ -30,12 +30,7 @@ TEMPLATE = "_template"
 
 # Known contract violations, tracked here until fixed (strict: the xfail turns
 # into a failure once the bug is fixed, so this list cannot go stale).
-KNOWN_FAILURES = {
-    ("lspa", "state_dict_roundtrip"): (
-        "LSpa's sparsity mask is a non-persistent buffer re-drawn at init and applied "
-        "in-place in forward, so a reloaded model zeroes a different set of weights."
-    ),
-}
+KNOWN_FAILURES = {}
 
 
 def _template_spec():
