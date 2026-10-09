@@ -145,6 +145,9 @@ and every merge-queue run:
 | `commit messages` | every commit in the PR and the PR title follow `COMMIT_POLICY.md` |
 | **`CI gate`** | passes only if all of the above passed; the one check branch protection requires |
 
+If only `commit messages` fails because of the **PR title**, edit the title: the gate re-runs by
+itself. (A failing *commit* message needs a new commit or a reworded branch.)
+
 `master` is protected (`tools/protect_branch.sh`): changes land only through pull requests, the
 `CI gate` must pass on a branch that is up to date with `master`, conversations must be resolved,
 and this applies to admins too. Merge with **"Create a merge commit"** to keep the individually

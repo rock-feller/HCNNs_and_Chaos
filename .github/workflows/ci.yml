@@ -10,6 +10,9 @@ on:
   push:
     branches: [master]
   pull_request:
+    # `edited` re-runs the gate when the PR title (checked below) or the base branch changes;
+    # a re-run of an older run would reuse the old title from its event payload.
+    types: [opened, synchronize, reopened, edited]
   merge_group:
   workflow_dispatch:
 
