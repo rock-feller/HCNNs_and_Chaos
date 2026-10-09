@@ -37,6 +37,7 @@ or issue. -->
 ## How was this tested?
 
 - [ ] `pytest -q` passes locally (includes the architecture contract and tutorials in fast mode)
+- [ ] The `CI gate` check is green (required to merge)
 - [ ] Added/updated tests in `tests/` that cover this change
 - [ ] (if runtime behavior) ran the relevant tutorial in full, e.g. `python tutorials/01_vanilla_hcnn.py`
 
