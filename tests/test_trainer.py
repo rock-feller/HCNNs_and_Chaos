@@ -1,4 +1,7 @@
-"""HCNNTrainer: loss decreases, both backprop modes validate, PTF schedule advances."""
+"""HCNNTrainer: loss decreases, both backprop modes validate, best weights restore.
+
+(The PTF dropout-schedule test lives in tests/architectures/test_ptf.py.)
+"""
 import math
 import tempfile
 import torch
@@ -6,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from hcnn.utils.data_generation import LorenzSolver
 from hcnn.utils.data_preprocessing import NormalizationStrategy, SlidingWindowDataset
-from hcnn.core.models.hcnn_models import Vanilla_Model, PTF_Model
+from hcnn import Vanilla_Model
 from hcnn.core.training.hcnn_trainer import HCNNTrainer
 
 
@@ -44,16 +47,6 @@ def test_logcosh_stable_on_large_errors():
     zero = torch.zeros_like(big)
     loss = HCNNTrainer._logcosh_loss(big, zero)
     assert torch.isfinite(loss)  # naive log(cosh(100)) would overflow to inf
-
-
-def test_ptf_dropout_schedule_advances():
-    loader, _, _ = _data()
-    m = PTF_Model(n_obs_vars=3, n_hid_vars=10, dropout_strategy="linear",
-                  dropout_params={"start_p": 0.0, "end_p": 0.5, "total_epochs": 5})
-    before = m.cell.dropout_module.p
-    tr = HCNNTrainer(m, learning_rate=1e-2, save_dir=tempfile.mkdtemp())
-    tr.train_only(loader, num_epochs=5, verbose=False)
-    assert m.cell.dropout_module.p > before
 
 
 def test_restore_best_loads_the_selected_epoch():

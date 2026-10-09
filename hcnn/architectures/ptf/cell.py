@@ -9,9 +9,9 @@ via dropout scaling during training.
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
-from ..base import BaseHCNNCell, CellOutput
-from ..layers.linear import CustomLinear
-from ..layers.dropout import (
+from ...core.base import BaseHCNNCell, CellOutput
+from ...core.layers.linear import CustomLinear
+from ...core.layers.dropout import (
     
     PartialTeacherForcingDropout,
     AdaptiveDropout,

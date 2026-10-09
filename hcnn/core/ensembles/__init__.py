@@ -1,27 +1,29 @@
 """
-Ensemble implementations for HCNN and classic models.
+Ensembles.
 
-This module provides ensemble classes that combine multiple models
-for improved prediction accuracy and uncertainty quantification.
+:class:`HCNNEnsemble` (in :mod:`.base`) is the generic ensemble every architecture
+subclasses. The concrete ensembles live with their architecture
+(``hcnn/architectures/<name>/ensemble.py``) and the RNN/LSTM ones in
+:mod:`hcnn.baselines`; they are re-exported here lazily for backward compatibility.
 """
 
-from .hcnn_ensembles import (
-    VanillaHCNNEnsemble,
-    PTFHCNNEnsemble,
-    LFormHCNNEnsemble,
-    LSpaHCNNEnsemble,
-)
+import importlib
 
-from .classic_ensembles import (
-    RNNEnsemble,
-    LSTMEnsemble,
-)
+from .base import HCNNEnsemble
 
-__all__ = [
-    "VanillaHCNNEnsemble",
-    "PTFHCNNEnsemble",
-    "LFormHCNNEnsemble",
-    "LSpaHCNNEnsemble",
-    "RNNEnsemble",
-    "LSTMEnsemble",
-]
+_MOVED = {
+    "VanillaHCNNEnsemble": "hcnn.architectures.vanilla",
+    "PTFHCNNEnsemble": "hcnn.architectures.ptf",
+    "LFormHCNNEnsemble": "hcnn.architectures.lform",
+    "LSpaHCNNEnsemble": "hcnn.architectures.lspa",
+    "RNNEnsemble": "hcnn.baselines",
+    "LSTMEnsemble": "hcnn.baselines",
+}
+
+__all__ = ["HCNNEnsemble", *_MOVED]
+
+
+def __getattr__(name):
+    if name in _MOVED:
+        return getattr(importlib.import_module(_MOVED[name]), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

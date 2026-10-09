@@ -1,32 +1,30 @@
 """
-Large Sparse (LSpa) HCNN cell implementation.
+Vanilla HCNN cell implementation.
 
 
-This module contains the Large Sparse HCNN cell that supports structured sparsity
-for efficient computation in high-dimensional dynamical systems.
+This module contains the basic Historical Consistent Neural Network (HCNN) cell
+that performs state-to-state mapping with teacher forcing mechanism support.
 """
 
 import torch
-import torch.nn as nn
-from typing import Optional, Tuple, Literal
-from ..base import BaseHCNNCell, CellOutput
-from ..layers.sparse import  CustomSparseLinear
-from ..layers.linear import CustomLinear
+from typing import Optional, Tuple
+from ...core.base import BaseHCNNCell, CellOutput
+from ...core.layers import CustomLinear
 
 
-
-class LSpaHCNNCell(BaseHCNNCell):
+class VanillaHCNNCell(BaseHCNNCell):
     """
-    Large Sparse HCNN Cell.
+    Vanilla HCNN Cell implementation.
 
-    Implements a scalable variant of the Historical Consistent Neural Network (HCNN) cell
-    designed for high-dimensional dynamical systems using sparsity-aware nonlinear transformation.
-    It performs a state-to-state mapping using sparsity-aware nonlinear transformation
-    and produces outputs based on hidden states.
+    This class implements the basic version of the Historical Consistent Neural Network (HCNN) Cell.
+    It performs a state-to-state mapping and produces outputs extracted from hidden states.
+    It is designed to support teacher forcing during training.
 
-    This cell supports structured sparsity for efficient computation and also supports
-    teacher forcing during training. The key innovation is the use of a sparse transformation
-    matrix that can handle large state spaces efficiently.
+    The cell implements the following dynamics:
+    - State transition: s_{t+1} = A * tanh(s_t) + B * u_t (if external inputs)
+    - Observation: y_t = C * s_t (where C is the observation matrix)
+    - Teacher forcing: r_t = s_t - C^T * (y_pred - y_true) when teacherr forcing is enabled,
+    otherwise the cell operates in autonomous prediction mode: r_t = s_t.
 
     Parameters
     ----------
@@ -35,34 +33,22 @@ class LSpaHCNNCell(BaseHCNNCell):
     n_hid_vars : int
         Number of hidden variables (i.e., the dimensionality of the hidden state variables)
     init_range : Tuple[float, float], default=(-0.75, 0.75)
-        Range for uniform initialization of weights
-    bias : bool, default=False
-        Whether to include bias terms in linear transformations
-    mask_type : Literal['non_obs_block', 'random_block'], default='random_block'
-        Type of sparsity mask to apply:
-        - 'random_block': Applies uniform random sparsity over the entire weight matrix
-        - 'non_obs_block': Applies sparsity only to the non-observable block of the matrix
-    sparsity_ratio : float, default=0.0
-        Proportion of weights to set to zero. Must be in the range [0.0, 1.0]
+        Tuple specifying the range for uniform weight initialization in the linear modules
     n_ext_vars : Optional[int], default=None
-        Number of external variables
+        Number of external variables (i.e., the dimensionality of the external variables)
 
     Attributes
     ----------
-    Sparse_A : CustomSparseLinear
-        Sparse state transition matrix with structured sparsity
+    A : CustomLinear
+        State transition matrix (n_state_vars x n_state_vars)
     B : CustomLinear, optional
-        External input matrix, only if n_ext_vars is provided
+        External input matrix (n_ext_vars x n_state_vars), only if n_ext_vars is provided
     ConMat : torch.Tensor
         Observation matrix that maps hidden states to observed outputs
+        Shape: (n_obs_vars, n_state_vars)
     Ide : torch.Tensor
         Identity matrix for state operations
-    bias : bool
-        Whether bias terms are included
-    mask_type : str
-        Type of sparsity mask applied
-    sparsity_ratio : float
-        Sparsity ratio applied to the transformation matrix
+        Shape: (n_state_vars, n_state_vars)
     """
 
     def __init__(
@@ -70,25 +56,16 @@ class LSpaHCNNCell(BaseHCNNCell):
         n_obs_vars: int,
         n_hid_vars: int,
         init_range: Tuple[float, float] = (-0.75, 0.75),
-        bias: bool = False,
-        mask_type: Literal['non_obs_block', 'random_block'] = 'random_block',
-        sparsity_ratio: float = 0.0,
         n_ext_vars: Optional[int] = None
     ):
         super().__init__(n_obs_vars, n_hid_vars, init_range, n_ext_vars)
-        
-        self.bias = bias
-        self.mask_type = mask_type
-        self.sparsity_ratio = sparsity_ratio
 
-        # Sparse state transition matrix
-        self.Sparse_A = CustomSparseLinear(
-            n_obs_vars=self.n_obs_vars,
-            n_hid_vars=self.n_hid_vars,
-            bias=self.bias,
-            init_range=self.init_range,
-            sparsity_ratio=self.sparsity_ratio,
-            mask_type=self.mask_type
+        # State transition matrix A
+        self.A = CustomLinear(
+            in_features=self.n_state_vars,
+            out_features=self.n_state_vars,
+            bias=False,
+            init_range=self.init_range
         )
 
         # External input matrix B (optional)
@@ -103,6 +80,7 @@ class LSpaHCNNCell(BaseHCNNCell):
             self.B = None
 
         # Observation matrix (maps state to observations)
+        # ConMat = [I_obs, 0] where I_obs is identity matrix of size n_obs_vars
         self.register_buffer(
             'ConMat',
             torch.eye(self.n_obs_vars, self.n_state_vars),
@@ -119,17 +97,18 @@ class LSpaHCNNCell(BaseHCNNCell):
     @property
     def cell_type(self) -> str:
         """Return the type of HCNN cell."""
-        return "lspa"
+        return "vanilla_hcnn_cell"
 
     def forward(
         self,
         state: torch.Tensor,
         teacher_forcing: bool = False,
         observation: Optional[torch.Tensor] = None,
-        externals: Optional[torch.Tensor] = None
+        externals: Optional[torch.Tensor] = None,
+
     ) -> CellOutput:
         """
-        Forward pass through the Large Sparse HCNN Cell.
+        Forward pass through the Vanilla HCNN Cell.
 
         Parameters
         ----------
@@ -142,6 +121,7 @@ class LSpaHCNNCell(BaseHCNNCell):
             Required when teacher_forcing=True
         externals : Optional[torch.Tensor], default=None
             External variables of shape (batch_size, n_ext_vars)
+            Only used if the cell was initialized with n_ext_vars
 
         Returns
         -------
@@ -173,8 +153,9 @@ class LSpaHCNNCell(BaseHCNNCell):
                     f"Expected {self.n_ext_vars} external variables, "
                     f"got {externals.shape[-1]}"
                 )
-            if self.B is not None:
-                external_contribution = self.B(externals)
+            # self.B is guaranteed to be not None when n_ext_vars is not None
+            assert self.B is not None, "B should not be None when n_ext_vars is provided"
+            external_contribution = self.B(externals)
         elif externals is not None:
             raise ValueError(
                 "External variables provided but cell doesn't support them. "
@@ -197,18 +178,22 @@ class LSpaHCNNCell(BaseHCNNCell):
             delta_term = observation - expectation
 
             # Apply teacher forcing correction
+            # Correction is applied by subtracting C^T * delta from state
             teach_forc = torch.matmul(delta_term, torch.as_tensor(self.ConMat, device=delta_term.device))
             corrected_state = state - teach_forc
 
-            # Compute next state using sparse transformation
-            next_state = self.Sparse_A(torch.tanh(corrected_state)) + external_contribution
+            # Compute next state with correction
+            next_state = self.A(torch.tanh(corrected_state)) + external_contribution
 
             return CellOutput(expectation, next_state, delta_term, {})
 
         else:
             # No teacher forcing - standard forward pass
+            # Apply identity transformation to state (for consistency)
             r_state = torch.matmul(state, torch.as_tensor(self.Ide, device=state.device))
-            next_state = self.Sparse_A(torch.tanh(r_state)) + external_contribution
+
+            # Compute next state
+            next_state = self.A(torch.tanh(r_state)) + external_contribution
 
             return CellOutput(expectation, next_state, None, {})
 
@@ -216,17 +201,9 @@ class LSpaHCNNCell(BaseHCNNCell):
         """Get the observation matrix."""
         return torch.as_tensor(self.ConMat, device=next(self.parameters()).device)
 
-    def get_sparse_transition_matrix(self) -> torch.Tensor:
-        """Get the current sparse state transition matrix weights."""
-        return self.Sparse_A.weight
-
-    def get_sparsity_info(self) -> dict:
-        """Get information about the current sparsity pattern."""
-        return self.Sparse_A.get_sparsity_info()
-
-    def visualize_sparsity_pattern(self) -> torch.Tensor:
-        """Get the current sparsity pattern for visualization."""
-        return self.Sparse_A.visualize_sparsity_pattern()
+    def get_state_transition_matrix(self) -> torch.Tensor:
+        """Get the current state transition matrix weights."""
+        return self.A.weight
 
     def get_external_input_matrix(self) -> Optional[torch.Tensor]:
         """Get the external input matrix weights if available."""
@@ -234,7 +211,7 @@ class LSpaHCNNCell(BaseHCNNCell):
 
     def reset_parameters(self):
         """Reset all parameters to their initial values."""
-        self.Sparse_A.reset_parameters()
+        self.A.reset_parameters()
         if self.B is not None:
             self.B.reset_parameters()
 
@@ -244,8 +221,5 @@ class LSpaHCNNCell(BaseHCNNCell):
             f'n_obs_vars={self.n_obs_vars}, '
             f'n_hid_vars={self.n_hid_vars}, '
             f'n_ext_vars={self.n_ext_vars}, '
-            f'init_range={self.init_range}, '
-            f'bias={self.bias}, '
-            f'mask_type={self.mask_type}, '
-            f'sparsity_ratio={self.sparsity_ratio}'
+            f'init_range={self.init_range}'
         )
