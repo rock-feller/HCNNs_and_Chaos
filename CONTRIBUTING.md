@@ -82,8 +82,7 @@ pytest tests/architectures/test_lform.py               # just one architecture's
 python tutorials/03_lform_hcnn.py                      # a real (non-fast) end-to-end run
 ```
 
-CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.12 for every push to `master`
-and every PR, and checks the commit messages and PR title. **A PR cannot merge with red CI.**
+CI checks every PR before it can merge; see §8 for what the gate contains.
 
 New behaviour comes with a test in `tests/` that would fail without it. For an architecture,
 re-derive one step of the recurrence by hand from the cell's own weights (see
@@ -133,5 +132,39 @@ this policy.
 - No regression of the invariants in §3.
 - The "why" is explained, especially for changed constants, learning rates, or architectural blocks.
 - For a new architecture: README filled in, tutorial added, CODEOWNERS line added.
+
+## 8. CI/CD
+
+**The CI gate** (`.github/workflows/ci.yml`) runs on every pull request, every push to `master`
+and every merge-queue run:
+
+| Job | Checks |
+|---|---|
+| `test (Python 3.10 / 3.11 / 3.12)` | `pytest`: unit tests, the architecture contract, all tutorials in fast mode |
+| `build package` | sdist + wheel build, `twine check --strict`, the wheel installs and imports cleanly |
+| `commit messages` | every commit in the PR and the PR title follow `COMMIT_POLICY.md` |
+| **`CI gate`** | passes only if all of the above passed; the one check branch protection requires |
+
+`master` is protected (`tools/protect_branch.sh`): changes land only through pull requests, the
+`CI gate` must pass on a branch that is up to date with `master`, conversations must be resolved,
+and this applies to admins too. Merge with **"Create a merge commit"** to keep the individually
+tested commits.
+
+**Releasing** (`.github/workflows/release.yml`):
+
+1. Open a PR that bumps `__version__` in `hcnn/__init__.py` following SemVer (`COMMIT_POLICY.md`
+   §6), e.g. `build(pkg): release 0.3.0`, and merge it through the gate.
+2. Tag the merge commit on `master` and push the tag:
+   ```bash
+   git switch master && git pull
+   git tag -a v0.3.0 -m "hcnn 0.3.0" && git push origin v0.3.0
+   ```
+3. The workflow checks the tag equals `__version__` and is on `master`, builds the package, runs
+   the full suite against the *installed wheel*, and publishes a GitHub Release with the wheel,
+   sdist and notes generated from the merged PR titles.
+4. PyPI (optional, off by default): add a trusted publisher on pypi.org (repository
+   `rock-feller/HCNNs_and_Chaos`, workflow `release.yml`, environment `pypi`), create the `pypi`
+   environment in the repository settings, then set the repository variable `PUBLISH_TO_PYPI=true`.
+   No API token is stored.
 
 Thank you for keeping the research codebase clean, reproducible, and structured!

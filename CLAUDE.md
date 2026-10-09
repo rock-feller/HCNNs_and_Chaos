@@ -76,7 +76,8 @@ If `hcnn` is not installed in the env, prefix commands with `PYTHONPATH=.`. `con
 ## Commits, CI, PRs
 
 - `COMMIT_POLICY.md` is authoritative (the `commit-message` skill in `.claude/skills/` summarises it). Format: `<type>(<scope>): <imperative lowercase summary>` (≤50 chars ideal, 72 max, no period), a blank line, past-tense bullet body, then a *why* paragraph (required for research types), then footers. Research types: `math arch data hparam exp`. Engineering types: `feat fix perf refactor docs test build ci style chore`. Scope = the architecture package name when the change is confined to it. `!` or `BREAKING CHANGE:` marks breaking changes. No ticket IDs.
-- Local hook: `git config core.hooksPath .githooks`. CI (`.github/workflows/ci.yml`) runs `pytest` on 3.11/3.12, and on PRs lints every commit plus the PR title (`--header-only`).
+- Local hook: `git config core.hooksPath .githooks`. CI (`.github/workflows/ci.yml`): `pytest` on 3.10/3.11/3.12, a package build + wheel-import check, and on PRs a lint of every commit plus the PR title (`--header-only`). The `CI gate` job aggregates them; it is the single required check on protected `master` (`tools/protect_branch.sh`). Never require the individual job names in branch protection.
+- CD (`.github/workflows/release.yml`): pushing tag `vX.Y.Z` (must equal `hcnn.__version__` and be on `master`) builds, tests the installed wheel from a source-free directory, and creates a GitHub Release. PyPI publishing via trusted publishing is opt-in (`vars.PUBLISH_TO_PYPI == 'true'`, environment `pypi`).
 - Branch `<type>/<topic>`; keep research changes and refactors in separate PRs. `.github/CODEOWNERS` maps architecture folders to owners.
 
 ## Import map (old `src.*` → canonical)
