@@ -1,67 +1,36 @@
 <!--
-PR guide: fill in every section. See CONTRIBUTING.md for the workflow and
-COMMIT_POLICY.md for the commit / PR-title convention. Keep PRs focused.
-The PR TITLE must follow the commit format, e.g. `arch(lform): gate externals with D`.
+Title: commit format, e.g. `fix(lspa): persist the sparsity mask` (checked by CI).
+Keep the description short and plain (about 150-350 words); see COMMIT_POLICY.md §8.
 -->
 
-## Summary
+## What
 
-<!-- What does this PR do, and WHY? One or two paragraphs. For research changes,
-state the mathematical / architectural motivation and reference the paper section
-or issue. -->
+<!-- One or two plain sentences: what this PR changes. -->
 
-## Architecture(s) / area touched
+## Why
 
-<!-- e.g. `lform` only · new architecture `<name>` · shared `core` (affects all) -->
+<!-- The motivation: research question, bug and its symptom, or paper / thesis section. -->
 
-## Type of change
+## Changes
 
-<!-- Tick all that apply. These mirror the commit types in COMMIT_POLICY.md. -->
+<!-- One bullet per logical change (usually one per commit). -->
 
-- [ ] `math` — core equations / loss / constraints
-- [ ] `arch` — architecture (new variant, cells, layers, gates)
-- [ ] `data` — data pipeline / generators / normalization
-- [ ] `hparam` — hyperparameters / seeds / run configs
-- [ ] `exp` — experiments / notebooks / results
-- [ ] `feat` — new software feature
-- [ ] `fix` — bug fix
-- [ ] `perf` — performance improvement
-- [ ] `refactor` — structure only, no behavior change
-- [ ] `docs` / `test` / `build` / `ci` / `chore`
-- [ ] **Breaking change** (public API or checkpoint compatibility) — described below
+-
 
-## Related issues / references
+## Results impact
 
-<!-- e.g. Fixes #42 ; paper draft Eq. 4.2 -->
+<!-- "None." - or which numerical results change, by how much, and which earlier results must be
+re-run. Mandatory for math / arch / data / hparam / exp changes. -->
 
-## How was this tested?
+## How it was checked
 
-- [ ] `pytest -q` passes locally (includes the architecture contract and tutorials in fast mode)
-- [ ] The `CI gate` check is green (required to merge)
-- [ ] Added/updated tests in `tests/` that cover this change
-- [ ] (if runtime behavior) ran the relevant tutorial in full, e.g. `python tutorials/01_vanilla_hcnn.py`
+<!-- Evidence beyond CI: before/after numbers, seeds, data, figures. -->
 
-<!-- Paste key output (loss curves, test summary, before/after numbers). -->
+## Notes for reviewers
 
-## New architecture checklist (skip otherwise)
+<!-- Optional: open questions, follow-ups, stacked-PR base. Delete if empty. -->
 
-- [ ] Package in `hcnn/architectures/<name>/` with a filled-in `README.md`
-- [ ] Architecture-specific tests in `tests/architectures/test_<name>.py`
-- [ ] Tutorial `tutorials/NN_<name>_hcnn.py`
-- [ ] `.github/CODEOWNERS` line for the folder, test and tutorial
+---
 
-## Architecture-invariant checklist
-
-<!-- See CONTRIBUTING.md §3. Confirm your change preserves them, or explain below
-why it must break one. -->
-
-- [ ] Rollout still lives once in `BaseHCNNModel.forward` (no per-architecture forward)
-- [ ] Standard device semantics (no auto-grab of MPS/CUDA in layers)
-- [ ] Data flow is leakage-safe (normalization fit on train only; val ≠ test)
-- [ ] New trainers subclass `BaseTrainer` (no copied training loop)
-- [ ] Baselines stay in `hcnn.baselines`
-
-## Commit hygiene
-
-- [ ] Commits and PR title follow `COMMIT_POLICY.md` (`type(scope): imperative summary`)
-- [ ] PR is focused (not a mix of unrelated math + refactor changes)
+- [ ] Architecture invariants kept (CONTRIBUTING.md §3), or the break is explained above
+- [ ] New architecture only: README, `tests/architectures/test_<name>.py`, tutorial, CODEOWNERS line

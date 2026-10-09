@@ -79,6 +79,7 @@ If `hcnn` is not installed in the env, prefix commands with `PYTHONPATH=.`. `con
 - Local hook: `git config core.hooksPath .githooks`. CI (`.github/workflows/ci.yml`): `pytest` on 3.10/3.11/3.12, a package build + wheel-import check, and on PRs a lint of every commit plus the PR title (`--header-only`). The `CI gate` job aggregates them; it is the single required check on protected `master` (`tools/protect_branch.sh`). Never require the individual job names in branch protection.
 - CD (`.github/workflows/release.yml`): pushing tag `vX.Y.Z` (must equal `hcnn.__version__` and be on `master`) builds, tests the installed wheel from a source-free directory, and creates a GitHub Release. PyPI publishing via trusted publishing is opt-in (`vars.PUBLISH_TO_PYPI == 'true'`, environment `pypi`).
 - Branch `<type>/<topic>`; keep research changes and refactors in separate PRs. `.github/CODEOWNERS` maps architecture folders to owners.
+- PR descriptions: What / Why / Changes / Results impact / How it was checked, short and plain (`COMMIT_POLICY.md` §8, `pr-description` skill). Merge with merge commits, not squash.
 
 ## Import map (old `src.*` → canonical)
 

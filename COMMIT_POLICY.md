@@ -159,11 +159,36 @@ git config commit.template .gitmessage    # pre-fills the editor with the format
   72 characters, a trailing period, a missing blank line after the header, and a research commit
   without a body. It also warns about non-imperative summaries and headers over 50 characters.
 - **In CI**, the `commit-messages` job runs the same checker on every commit of a pull request.
-- **Squash merges:** the PR title becomes the commit header, so PR titles follow the same format.
+- **PR titles** are checked the same way (header only): they appear in the merge commit and in the
+  generated release notes.
 
 Check a message by hand: `echo "fix(ptf): clamp p" | python tools/check_commit_msg.py -`.
 
-## 8. Cheat-sheet
+## 8. Pull requests
+
+**Title:** the commit header format (`<type>(<scope>): <imperative summary>`), using the type of
+the PR's main intent.
+
+**Description:** simple and descriptive. A reader should understand in under a minute what changed,
+why, and whether any research result is affected. Use these sections (the PR template pre-fills
+them; the `pr-description` skill in `.claude/skills/` drafts them):
+
+| Section | Content |
+|---|---|
+| **What** | One or two plain sentences: what the PR changes |
+| **Why** | The motivation: research question, bug and symptom, or paper / thesis section |
+| **Changes** | One bullet per logical change (usually one per commit) |
+| **Results impact** | `None.`, or which numerical results change, by how much, and what must be re-run. Mandatory for research types |
+| **How it was checked** | Evidence beyond CI: before/after numbers, seeds, data, figures |
+| **Notes for reviewers** | Optional: open questions, follow-ups, stacked-PR base |
+
+Keep it to about 150–350 words. Prefer numbers to adjectives, never invent numbers or references,
+and link a `docs/` write-up for long evidence instead of pasting it.
+
+**Merging:** use **"Create a merge commit"**, not squash. The individually checked commits stay in
+the history, so `git bisect` can pinpoint which change moved a result.
+
+## 9. Cheat-sheet
 
 ```text
 arch(<name>): add <idea>                      new architecture or cell change   (body required)
