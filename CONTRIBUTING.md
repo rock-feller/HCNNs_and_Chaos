@@ -119,9 +119,9 @@ this policy.
    `fix/lspa-mask-reload`.
 2. Make focused commits following §5.
 3. Run `pytest -q` locally. It must be green.
-4. Push and open a PR. Its title follows the commit format (it becomes the squash-merge commit). The
-   description template (`.github/pull_request_template.md`) asks for the summary, the type, testing
-   evidence and the invariant checklist.
+4. Push and open a PR. Its title follows the commit format. The description template
+   (`.github/pull_request_template.md`) asks for What / Why / Changes / Results impact / How it was
+   checked; keep it short and plain (`COMMIT_POLICY.md` §8).
 5. Keep PRs focused. A PR that mixes a math change with a large refactor is hard to review and hard
    to bisect later, so split them.
 
