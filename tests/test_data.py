@@ -4,6 +4,7 @@ import torch
 from hcnn.utils.data_generation import LorenzSolver, ChaoticSystemGenerator
 from hcnn.utils.data_preprocessing import (
     NormalizationStrategy, NoisificationStrategy, SlidingWindowDataset, prepare_chaotic_data,
+    train_val_test_split,
 )
 
 
@@ -52,3 +53,11 @@ def test_sliding_window_shapes_cpu():
     assert len(ds) == 100 - 20 + 1
     assert ds[0].shape == (20, 3)
     assert ds[0].device.type == "cpu"
+
+
+def test_train_val_test_split_is_chronological_and_fit_on_train_only():
+    data = torch.arange(100, dtype=torch.float32).unsqueeze(1).repeat(1, 3)
+    train, val, test, norm = train_val_test_split(data, 0.6, 0.2, scaling_factor=0.5)
+    assert (len(train), len(val), len(test)) == (60, 20, 20)
+    assert torch.allclose(norm.mean_, data[:60].mean(dim=0))  # train statistics only
+    assert torch.allclose(norm.inverse_transform(test), data[80:])
