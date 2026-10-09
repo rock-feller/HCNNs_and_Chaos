@@ -37,16 +37,38 @@ class BaseTrainer:
         model,
         loss_fn: Literal["mse", "logcosh"] = "mse",
         backprop_mode: Literal["per_batch", "per_epoch"] = "per_batch",
-        optimizer_type: Literal["adam", "sgd"] = "adam",
+        optimizer_type: Literal["adam", "adamw", "sgd"] = "adam",
         learning_rate: float = 1e-4,
         grad_clip: Optional[float] = None,
         save_dir: str = "./checkpoints",
+        weight_decay: float = 0.0,
+        lr_schedule: Optional[Literal["cosine"]] = None,
+        min_lr_ratio: float = 0.01,
+        patience: Optional[int] = None,
     ):
+        """
+        Parameters (beyond the obvious)
+        ----------
+        grad_clip : float, optional
+            Clip the global gradient norm to this value (``None`` = no clipping).
+        weight_decay : float
+            L2 penalty (``adam``/``sgd``) or decoupled weight decay (``adamw``).
+        lr_schedule : {"cosine", None}
+            ``"cosine"`` anneals the learning rate from ``learning_rate`` to
+            ``min_lr_ratio * learning_rate`` over the ``num_epochs`` of each ``train_*`` call.
+        patience : int, optional
+            ``train_and_validate`` stops after this many epochs without a new best
+            validation loss (``None`` = always run ``num_epochs``).
+        """
         self.model = model
         self.best_state_dict = None  # weights of the selected (best) epoch; see restore_best()
         self.backprop_mode = backprop_mode
         self.grad_clip = grad_clip
         self.save_dir = save_dir
+        self.lr_schedule = lr_schedule
+        self.min_lr_ratio = min_lr_ratio
+        self.patience = patience
+        self.scheduler = None
         os.makedirs(save_dir, exist_ok=True)
 
         if loss_fn == "mse":
@@ -57,11 +79,15 @@ class BaseTrainer:
             raise ValueError(f"Unknown loss function: {loss_fn}")
 
         if optimizer_type == "adam":
-            self.optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+            self.optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        elif optimizer_type == "adamw":
+            self.optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         elif optimizer_type == "sgd":
-            self.optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+            self.optimizer = optim.SGD(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         else:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
+        if lr_schedule not in (None, "cosine"):
+            raise ValueError(f"Unknown lr_schedule: {lr_schedule}")
 
     # ---- hooks implemented by concrete trainers ---------------------- #
     def _batch_loss(self, batch: torch.Tensor) -> torch.Tensor:
@@ -134,7 +160,8 @@ class BaseTrainer:
         self.model.eval()
         cal = calibration_window.to(self._device)
         val = val_data.to(self._device)
-        forecast = self._forecast(cal, val.shape[0])
+        # (T, n_obs) for one window, or (n_windows, T, n_obs) to average over several.
+        forecast = self._forecast(cal, val.shape[-2])
         val_loss = self.loss_fn(forecast, val).item()
         if was_training:
             self.model.train()
@@ -158,13 +185,25 @@ class BaseTrainer:
                 os.path.join(self.save_dir, f"{name}{tag}_best.pth"),
             )
 
+    def _start_schedule(self, num_epochs: int):
+        if self.lr_schedule == "cosine":
+            base_lr = self.optimizer.param_groups[0]["lr"]
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, T_max=max(num_epochs, 1), eta_min=self.min_lr_ratio * base_lr)
+
+    def _end_epoch(self):
+        if self.scheduler is not None:
+            self.scheduler.step()
+
     # ---- public API --------------------------------------------------- #
     def train_only(self, data_loader, num_epochs: int = 10, verbose: bool = True):
         """Train on ``data_loader``; checkpoint the best epoch by avg training loss."""
         best_loss = float("inf")
         summary = []
+        self._start_schedule(num_epochs)
         for epoch in tqdm(range(num_epochs), desc="Training Only"):
             avg = self._run_train_epoch(data_loader, epoch)
+            self._end_epoch()
             if avg < best_loss:
                 best_loss = avg
                 self._save_best(epoch + 1, avg, "_single")
@@ -182,22 +221,34 @@ class BaseTrainer:
         Train and, once per epoch, forecast from ``calibration_window`` and score
         against ``val_data``; checkpoint the best epoch by validation loss.
 
+        Pass one window (``(T, n_obs)`` / ``(H, n_obs)``) or a batch of windows
+        (``(n_windows, T, n_obs)`` / ``(n_windows, H, n_obs)``, see
+        :func:`hcnn.utils.data_preprocessing.forecast_windows`). A single chaotic
+        validation window is a very noisy selection signal; several windows are better.
+
         NOTE: ``val_data`` drives model selection, so it must NOT double as the
         final test set (that would be selection-on-test leakage).
         """
         best_val = float("inf")
+        best_epoch = 0
         summary = []
+        self._start_schedule(num_epochs)
         for epoch in tqdm(range(num_epochs), desc="Training and Validating"):
             avg = self._run_train_epoch(data_loader, epoch)
+            self._end_epoch()
             val = self._validate(calibration_window, val_data)
             if val < best_val:
-                best_val = val
+                best_val, best_epoch = val, epoch
                 self._save_best(epoch + 1, val, "_validated")
                 if verbose:
                     print(f"✅ Epoch {epoch+1}: new best val loss {val:.6f}")
             summary.append({f"epoch_{epoch+1}": {"avg_train_loss": avg, "avg_val_loss": val}})
             if verbose:
                 print(f"Epoch {epoch+1}/{num_epochs} - Train: {avg:.6f}, Val: {val:.6f}")
+            if self.patience is not None and epoch - best_epoch >= self.patience:
+                if verbose:
+                    print(f"Early stop at epoch {epoch+1} (best: epoch {best_epoch+1})")
+                break
         self.save_epochs_losses_to_json(summary)
         return best_val
 
