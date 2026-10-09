@@ -54,3 +54,14 @@ def test_ptf_dropout_schedule_advances():
     tr = HCNNTrainer(m, learning_rate=1e-2, save_dir=tempfile.mkdtemp())
     tr.train_only(loader, num_epochs=5, verbose=False)
     assert m.cell.dropout_module.p > before
+
+
+def test_restore_best_loads_the_selected_epoch():
+    loader, cal, val = _data()
+    m = Vanilla_Model(n_obs_vars=3, n_hid_vars=10)
+    tr = HCNNTrainer(m, learning_rate=1e-2, save_dir=tempfile.mkdtemp())
+    best_val = tr.train_and_validate(loader, num_epochs=3, calibration_window=cal,
+                                     val_data=val, verbose=False)
+    tr.restore_best()
+    assert math.isclose(tr._validate(cal, val), best_val, rel_tol=1e-5)
+

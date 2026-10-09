@@ -19,6 +19,7 @@ and baseline ensembles.
 """
 
 import os
+import copy
 import json
 import numpy as np
 import torch
@@ -42,6 +43,7 @@ class BaseTrainer:
         save_dir: str = "./checkpoints",
     ):
         self.model = model
+        self.best_state_dict = None  # weights of the selected (best) epoch; see restore_best()
         self.backprop_mode = backprop_mode
         self.grad_clip = grad_clip
         self.save_dir = save_dir
@@ -137,6 +139,7 @@ class BaseTrainer:
         return val_loss
 
     def _save_best(self, epoch: int, loss: float, tag: str):
+        self.best_state_dict = copy.deepcopy(self.model.state_dict())
         # HCNN models carry a rich save_checkpoint; plain nn.Modules (RNN/LSTM
         # baselines) fall back to a standard torch.save.
         if hasattr(self.model, "save_checkpoint"):
@@ -195,6 +198,17 @@ class BaseTrainer:
                 print(f"Epoch {epoch+1}/{num_epochs} - Train: {avg:.6f}, Val: {val:.6f}")
         self.save_epochs_losses_to_json(summary)
         return best_val
+
+    def restore_best(self):
+        """Load the weights of the selected epoch back into ``self.model``.
+
+        After ``train_and_validate`` the model holds the *last* epoch's weights;
+        call this before the final (once-only) evaluation on the test set.
+        """
+        if self.best_state_dict is None:
+            raise RuntimeError("No best epoch recorded yet - train first.")
+        self.model.load_state_dict(self.best_state_dict)
+        return self.model
 
     def save_epochs_losses_to_json(self, epoch_losses):
         name = getattr(self.model, "name", self.model.__class__.__name__)
