@@ -30,12 +30,7 @@ TEMPLATE = "_template"
 
 # Known contract violations, tracked here until fixed (strict: the xfail turns
 # into a failure once the bug is fixed, so this list cannot go stale).
-KNOWN_FAILURES = {
-    ("lspa", "state_dict_roundtrip"): (
-        "LSpa's sparsity mask is a non-persistent buffer re-drawn at init and applied "
-        "in-place in forward, so a reloaded model zeroes a different set of weights."
-    ),
-}
+KNOWN_FAILURES = {}
 
 
 def _template_spec():
@@ -90,6 +85,28 @@ def test_cell_returns_celloutput_in_both_modes(spec):
     auto = cell(state, teacher_forcing=False)
     assert auto.next_state.shape == (4, N_STATE)
     assert auto.delta_term is None
+
+
+def test_teacher_forcing_replaces_observed_coordinates(spec):
+    """r_t = s_t - C^T (y_pred - y_true): the observed part of r_t IS the data, so under
+    teacher forcing the next state cannot depend on the model's own observed coordinates."""
+    cell = spec.cell_cls(n_obs_vars=N_OBS, n_hid_vars=N_HID).eval()  # eval: no PTF dropout
+    obs = torch.randn(4, N_OBS)
+    a = torch.randn(4, N_STATE)
+    b = a.clone()
+    b[:, :N_OBS] = torch.randn(4, N_OBS)  # different predictions, same hidden state
+    na = cell(a, teacher_forcing=True, observation=obs).next_state
+    nb = cell(b, teacher_forcing=True, observation=obs).next_state
+    assert torch.allclose(na, nb, atol=1e-6)
+
+
+def test_forecast_starts_after_the_window(spec):
+    """forecasts[:, 0] predicts the step AFTER the window, not the last observed step."""
+    m = _model(spec).eval()
+    with torch.no_grad():
+        out = m(torch.randn(1, 10, N_OBS), forecast_horizon=2)
+    assert not torch.allclose(out.forecasts[:, 0], out.expectations[:, -1])
+    assert torch.allclose(out.forecasts, out.future_states[..., :N_OBS], atol=1e-6)
 
 
 def test_teacher_forcing_uses_the_observation(spec):
@@ -149,10 +166,6 @@ def test_gradients_flow(spec):
     assert any(g.abs().sum() > 0 for g in grads)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known rollout bug in BaseHCNNModel.forward: the forecast restarts from the "
-    "uncorrected state s_{T-1}, so forecasts[0] repeats expectations[-1] and the last "
-    "observation never influences the forecast (one-step shift vs. the targets)."))
 def test_forecast_uses_the_last_observation(spec):
     m = _model(spec).eval()
     data = torch.randn(1, 10, N_OBS)

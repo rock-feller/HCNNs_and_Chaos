@@ -12,7 +12,7 @@ gradients flow over long windows.
 ## Recurrence
 
 ```
-r_t     = s_t − Cᵀ δ_t                   (teacher forcing; r_t = s_t when forecasting)
+r_t     = s_t − Cᵀ (ŷ_t − y_t)           (teacher forcing; r_t = s_t when forecasting)
 s_{t+1} = r_t + D (A tanh(r_t) − r_t) [+ B u_t]
 ```
 

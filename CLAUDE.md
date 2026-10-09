@@ -47,16 +47,19 @@ test/                          # legacy tests of private copies; ignored (pytest
 - **Contract** (enforced by `tests/test_architecture_contract.py`): `expectation = C s_t` with `C = [I | 0]`; `delta_term = y − expectation` under teacher forcing, `None` otherwise; an autonomous step ignores observations; the model is constructible as `Model(n_obs_vars, n_hid_vars)`; it builds on CPU; gradients reach all parameters; it trains with `HCNNTrainer`; its ensemble works.
 - **Avoid import cycles:** architectures import from `hcnn.core`, so `hcnn.core.cells` / `hcnn.core.models` / `hcnn.core.ensembles` resolve moved names lazily via module `__getattr__`. Don't make `hcnn.core` eagerly import `hcnn.architectures`.
 - **Device semantics:** layers build on the default device; callers use `model.to(device)`. No auto-detection inside layers.
-- **Trainers:** `BaseTrainer` owns the loop; subclasses implement `_batch_loss` / `_forecast`. `train_and_validate` selects the epoch on `val_data` (never the test set). `restore_best()` reloads the selected epoch's in-memory weights. `_on_epoch_start` calls `model.update_dropout_epoch` if present (PTF schedules).
+- **Trainers:** `BaseTrainer` owns the loop; subclasses implement `_batch_loss` / `_forecast`. `train_and_validate` selects the epoch on `val_data` (never the test set). `restore_best()` reloads the selected epoch's in-memory weights. `_on_epoch_start` calls `model.update_dropout_epoch` if present (PTF schedules). Options: `optimizer_type="adamw"`, `weight_decay`, `lr_schedule="cosine"`, `patience`, `grad_clip`; validation data may be a batch of windows `(n, T, n_obs)`. `per_epoch` mode accumulates gradients batch by batch.
 - **Leakage-safe data:** burn-in → chronological split → `NormalizationStrategy` fitted on train only (`train_val_test_split` does both) → select on validation → evaluate test once.
 
-### Known open bugs (tracked as strict xfails in the contract test; fix in separate `math(core)` / `fix(lspa)` PRs)
-- **Rollout off-by-one:** the forecast restarts from the uncorrected `s_{T-1}`, so `forecasts[0] == expectations[-1]` and the last observation is ignored.
-- **LSpa reload:** `sparsity_mask` is a non-persistent buffer re-drawn at init and applied in place in `forward`, so `load_state_dict` into a fresh `LSpa_Model` corrupts the weights.
+### Equations are tested as properties
+The teacher-forcing correction is `r_t = s_t − Cᵀ(ŷ_t − y_t) = s_t + Cᵀδ_t` with `δ_t = y_t − ŷ_t`, so the observed part of `r_t` **equals the data**. A sign flip here, PTF dropout rescaling by `1/(1−p)`, and a forecast that ignored the last observation were all regressions from the original 2024 code. They are fixed, and `test_architecture_contract.py` checks the properties (`next_state` independent of the predicted observed coordinates under teacher forcing; `forecasts[0]` predicts the step *after* the window). Do not re-derive the formula in tests with the code's own sign; test the property. Full write-up: `docs/vanilla_hcnn_review.md`.
 
-Training gotchas (measured on Lorenz, dt=0.01, scaling 0.02):
-- **Budget:** Vanilla with `n_hid_vars=20`, Adam lr 1e-2 needs about 150 epochs (test RMSE@300 ≈ 0.09 normalized). After 30 epochs it is still underfit and the selected forecast collapses toward the mean (≈0.17–0.18).
-- **Ensemble init:** the `*HCNNEnsemble` constructors default to `init_range=(-0.75, 0.75)`, while the models default to `(-0.5, 0.5)`. With the wider range most members diverge, so pass `init_range` explicitly.
+### Training findings (measured; Lorenz, Vanilla, 5 seeds, metric = valid prediction time in Lyapunov times)
+- **The sampling step dominates:** `dt = 0.05` gives 6× longer valid forecasts than `dt = 0.01` (a near-identity step is badly conditioned for `A tanh(·)`). The tutorials use `DT = 0.05`.
+- **Validate on several windows at ≈ 1 Lyapunov time** (`forecast_windows(val, context, horizon, n)` → pass both to `train_and_validate`). 300-step MSE rewards predicting the mean, and runs then select epoch 1.
+- **Helps:** `lr_schedule="cosine"` (+40 % at dt 0.05) and shuffled windows. **No gain or harmful:** grad clipping, lr 3e-3, spectral-radius-1 init, washout (removed), LayerNorm (rejected: breaks `y = C s`).
+- **Init scales with size:** keep the spectral radius when changing `n_hid_vars` (`init_range ≈ ±0.5·√(23/n_state)`); the fixed ±0.5 with 50 hidden units collapses.
+- **Ensemble init:** `*HCNNEnsemble` constructors default to `init_range=(-0.75, 0.75)`, but models default to `(-0.5, 0.5)`. With the wider range most members diverge, so pass `init_range` explicitly. Seed-only ensembles are under-dispersed.
+- **Known remaining issues:** LForm's `DiagonalMatrix` still has a hidden gradient hook (clip 0.5, NaN→0) and in-place clamping; LSpa's init is a normal with std `a/√n`, not the documented uniform. Both confound architecture comparisons.
 
 ## Commands
 

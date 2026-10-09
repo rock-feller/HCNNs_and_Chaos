@@ -28,7 +28,7 @@ class LFormHCNNCell(BaseHCNNCell):
     3. Residual connections for improved gradient flow
 
     The dynamics are:
-    - r_t = s_t - C^T * (y_true - y_pred) (if teacher forcing)
+    - r_t = s_t - C^T * (y_pred - y_true) (if teacher forcing; observed part of r_t = y_true)
     - lstm_block = A(tanh(r_t)) - r_t
     - s_{t+1} = r_t + D(lstm_block)
 
@@ -194,8 +194,9 @@ class LFormHCNNCell(BaseHCNNCell):
             delta_term = observation - expectation
 
             # Apply teacher forcing correction
+            # r_t = s_t - C^T (y_pred - y_true) = s_t + C^T delta_t: the observed part of r_t equals y_t
             teach_forc = torch.matmul(delta_term, torch.as_tensor(self.ConMat, device=delta_term.device))
-            r_state = state - teach_forc
+            r_state = state + teach_forc
 
             # LSTM-like computation
             # lstm_block = A(tanh(r_state)) - r_state (residual connection)

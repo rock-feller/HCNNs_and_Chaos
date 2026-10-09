@@ -17,7 +17,7 @@ Registering is one call in the architecture's ``__init__.py``::
         model_cls=Vanilla_Model,
         cell_cls=VanillaHCNNCell,
         ensemble_cls=VanillaHCNNEnsemble,
-        summary="s_{t+1} = A tanh(s_t - C^T delta_t)",
+        summary="s_{t+1} = A tanh(s_t - C^T (y_hat_t - y_t))",
     ))
 """
 

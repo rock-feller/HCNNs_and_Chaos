@@ -23,7 +23,7 @@ class VanillaHCNNCell(BaseHCNNCell):
     The cell implements the following dynamics:
     - State transition: s_{t+1} = A * tanh(s_t) + B * u_t (if external inputs)
     - Observation: y_t = C * s_t (where C is the observation matrix)
-    - Teacher forcing: r_t = s_t - C^T * (y_pred - y_true) when teacherr forcing is enabled,
+    - Teacher forcing: r_t = s_t - C^T * (y_pred - y_true) when teacher forcing is enabled,
     otherwise the cell operates in autonomous prediction mode: r_t = s_t.
 
     Parameters
@@ -177,10 +177,10 @@ class VanillaHCNNCell(BaseHCNNCell):
             # Compute delta term (observation error)
             delta_term = observation - expectation
 
-            # Apply teacher forcing correction
-            # Correction is applied by subtracting C^T * delta from state
+            # Teacher forcing correction. With delta = y_true - y_pred:
+            # r_t = s_t - C^T (y_pred - y_true) = s_t + C^T delta_t: the observed part of r_t equals y_t
             teach_forc = torch.matmul(delta_term, torch.as_tensor(self.ConMat, device=delta_term.device))
-            corrected_state = state - teach_forc
+            corrected_state = state + teach_forc
 
             # Compute next state with correction
             next_state = self.A(torch.tanh(corrected_state)) + external_contribution

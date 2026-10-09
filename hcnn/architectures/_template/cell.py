@@ -8,8 +8,8 @@ contract tests from the very first commit; change ``_transition`` to your idea.
 Contract (checked by ``tests/test_architecture_contract.py``):
 - ``forward`` returns a :class:`CellOutput` ``(expectation, next_state, delta_term, extras)``;
 - ``expectation = C s_t`` with ``C = [I | 0]`` (first ``n_obs_vars`` coordinates);
-- with ``teacher_forcing=True`` the state is corrected by ``-C^T delta_t`` with
-  ``delta_t = y_t - expectation``; with ``teacher_forcing=False`` no truth is used;
+- with ``teacher_forcing=True`` the state is corrected to ``r_t = s_t - C^T (expectation - y_t)``,
+  so the observed coordinates of ``r_t`` equal the data; with ``teacher_forcing=False`` no truth is used;
 - parameters are created on the default device (no ``.to("mps")`` inside the cell).
 """
 
@@ -62,7 +62,8 @@ class TemplateHCNNCell(BaseHCNNCell):  # TODO: rename, e.g. MyIdeaHCNNCell
             if observation is None:
                 raise ValueError("`observation` must be provided when `teacher_forcing` is True.")
             delta_term = observation - expectation
-            r = state - delta_term @ self.ConMat
+            # r_t = s_t - C^T (y_pred - y_true) = s_t + C^T delta_t: the observed part of r_t equals y_t
+            r = state + delta_term @ self.ConMat
 
         next_state = self._transition(r)
         if self.B is not None:

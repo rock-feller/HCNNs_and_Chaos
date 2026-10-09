@@ -29,15 +29,16 @@ from torch.utils.data import DataLoader
 import hcnn
 from hcnn.core.training import HCNNTrainer
 from hcnn.utils.data_generation import LorenzSolver
-from hcnn.utils.data_preprocessing import SlidingWindowDataset, train_val_test_split
+from hcnn.utils.data_preprocessing import SlidingWindowDataset, forecast_windows, train_val_test_split
 from hcnn.utils.plotting import ChaoticSystemPlotter
 
 OUT = Path(os.environ.get("HCNN_TUTORIAL_OUT", "tutorial_outputs")) / "04_lspa"
 OUT.mkdir(parents=True, exist_ok=True)
 torch.manual_seed(0)
 
-T_END, EPOCHS = (12.0, 1) if FAST else (60.0, 150)
-CONTEXT, HORIZON, WINDOW = (100, 50, 50) if FAST else (200, 300, 100)
+DT = 0.05  # sampling step - the most important setting (docs/vanilla_hcnn_review.md)
+T_END, EPOCHS = (60.0, 1) if FAST else (300.0, 150)
+CONTEXT, HORIZON, VAL_H, WINDOW = (50, 20, 10, 50) if FAST else (200, 100, 20, 100)
 N_OBS, N_HID = 3, 60
 
 # %% [markdown]
@@ -56,15 +57,18 @@ fig.savefig(OUT / "masks.png", dpi=120, bbox_inches="tight")
 # ## Train a 90 %-sparse LSpa HCNN
 
 # %%
-lorenz, _ = LorenzSolver(start=0.0, stop=T_END, ics=(1.0, 0.0, 1.25), time_grid=0.01, burn_in=20.0)
+lorenz, _ = LorenzSolver(start=0.0, stop=T_END, ics=(1.0, 0.0, 1.25), time_grid=DT, burn_in=20.0)
 train, val, test, norm = train_val_test_split(lorenz, 0.6, 0.2, scaling_factor=0.02)
-loader = DataLoader(SlidingWindowDataset(train, window_size=WINDOW), batch_size=32, shuffle=False)
+# Validate on 6 windows, VAL_H steps ahead (~1 Lyapunov time): longer horizons reward
+# predicting the mean, a single window makes epoch selection noisy.
+val_cal, val_target = forecast_windows(val, CONTEXT, VAL_H, n_windows=6)
+loader = DataLoader(SlidingWindowDataset(train, window_size=WINDOW), batch_size=32, shuffle=True)
 
 model = hcnn.LSpa_Model(n_obs_vars=N_OBS, n_hid_vars=N_HID, sparsity_ratio=0.9,
                         mask_type="non_obs_block")
-trainer = HCNNTrainer(model, learning_rate=1e-2, save_dir=str(OUT / "checkpoints"))
-best_val = trainer.train_and_validate(loader, EPOCHS, calibration_window=val[:CONTEXT],
-                                      val_data=val[CONTEXT:CONTEXT + HORIZON], verbose=False)
+trainer = HCNNTrainer(model, learning_rate=1e-2, lr_schedule="cosine", save_dir=str(OUT / "checkpoints"))
+best_val = trainer.train_and_validate(loader, EPOCHS, calibration_window=val_cal,
+                                      val_data=val_target, verbose=False)
 trainer.restore_best()
 print(f"best validation forecast MSE: {best_val:.5f}")
 
@@ -75,8 +79,7 @@ print(f"actual sparsity after training: {model.get_sparsity_info()['actual_spars
 # %% [markdown]
 # ## Forecast the test segment
 #
-# Note: keep evaluating the *trained object*. Reloading an LSpa `state_dict` into a fresh model
-# currently re-draws the mask (a known issue, tracked in `tests/test_architecture_contract.py`).
+# The mask is a persistent buffer, so `state_dict()` / `load_state_dict()` round-trip it.
 
 # %%
 model.eval()

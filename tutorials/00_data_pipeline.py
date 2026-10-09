@@ -28,13 +28,15 @@ from hcnn.utils.data_generation import ChaoticSystemGenerator
 from hcnn.utils.data_preprocessing import (
     NormalizationStrategy,
     SlidingWindowDataset,
+    forecast_windows,
     train_val_test_split,
 )
 from hcnn.utils.plotting import ChaoticSystemPlotter
 
 OUT = Path(os.environ.get("HCNN_TUTORIAL_OUT", "tutorial_outputs")) / "00_data"
 OUT.mkdir(parents=True, exist_ok=True)
-T_END = 15.0 if FAST else 60.0
+DT = 0.05  # sampling step, see section 1b
+T_END = 60.0 if FAST else 300.0
 
 # %% [markdown]
 # ## 1. Generate trajectories (with burn-in)
@@ -44,16 +46,31 @@ T_END = 15.0 if FAST else 60.0
 
 # %%
 gen = ChaoticSystemGenerator()
-lorenz, t = gen.generate_lorenz(stop=T_END, time_grid=0.01, burn_in=20.0)
-rossler, _ = gen.generate_rossler(stop=T_END, time_grid=0.01, burn_in=50.0)
-chua, _ = gen.generate_chua(stop=T_END, time_grid=0.01, burn_in=20.0)
+lorenz, t = gen.generate_lorenz(stop=T_END, time_grid=DT, burn_in=20.0)
+rossler, _ = gen.generate_rossler(stop=T_END, time_grid=DT, burn_in=50.0)
+chua, _ = gen.generate_chua(stop=T_END, time_grid=DT, burn_in=20.0)
 for name, traj in [("lorenz", lorenz), ("rossler", rossler), ("chua", chua)]:
     print(f"{name:8s} shape={tuple(traj.shape)}  first point={traj[0].numpy().round(2)}")
 
-no_burn, _ = gen.generate_lorenz(stop=T_END, time_grid=0.01, burn_in=0.0)
+no_burn, _ = gen.generate_lorenz(stop=T_END, time_grid=DT, burn_in=0.0)
 print("without burn-in the trajectory starts at the initial condition:", no_burn[0].numpy())
 
 ChaoticSystemPlotter(lorenz, "Lorenz").plot_phase_space(save_path=OUT / "lorenz_phase_space.png")
+
+# %% [markdown]
+# ## 1b. Choose the sampling step deliberately
+#
+# One HCNN step must map `s_t` to `s_{t+Δt}`. If `Δt` is tiny, consecutive states are almost
+# identical and the vanilla map `A tanh(·)` has to learn a near-identity, which is badly conditioned.
+# On Lorenz, `Δt = 0.05` gave a 6× longer valid forecast than `Δt = 0.01` (same number of samples;
+# `docs/vanilla_hcnn_review.md`). Report `Δt` with every result, and measure forecast horizons in
+# Lyapunov times (Lorenz: λ ≈ 0.906, so one Lyapunov time is ≈ 1.1 time units = 22 steps here).
+
+# %%
+fine, _ = gen.generate_lorenz(stop=10.0, time_grid=0.01, burn_in=20.0)
+for dt, traj in [(0.01, fine), (DT, lorenz)]:
+    step = (traj[1:] - traj[:-1]).norm(dim=1).mean() / traj.std(0).norm()
+    print(f"dt={dt}: mean change per step = {step:.1%} of the attractor size")
 
 # %% [markdown]
 # ## 2–3. Split first, then normalize with training statistics
@@ -86,7 +103,17 @@ assert torch.allclose(norm2.inverse_transform(test2), lorenz[i_val:], atol=1e-4)
 # %%
 WINDOW = 50 if FAST else 100
 dataset = SlidingWindowDataset(train, window_size=WINDOW)
-loader = DataLoader(dataset, batch_size=32, shuffle=False)
+loader = DataLoader(dataset, batch_size=32, shuffle=True)
 batch = next(iter(loader))
 print(f"{len(dataset)} windows; one batch has shape {tuple(batch.shape)} = (batch, window, n_obs)")
+
+# %% [markdown]
+# ## 5. Validation / test windows
+#
+# A chaotic forecast's error depends strongly on where it starts, so judge models on several
+# evenly spaced windows: each pairs `context` observed steps with the `horizon` steps that follow.
+
+# %%
+cal, target = forecast_windows(val, context=100, horizon=20, n_windows=6)
+print(f"validation: calibration {tuple(cal.shape)}, targets {tuple(target.shape)}")
 print(f"figures saved to {OUT}/")
