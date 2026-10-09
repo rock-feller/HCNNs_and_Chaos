@@ -83,6 +83,7 @@ If `hcnn` is not installed in the env, prefix commands with `PYTHONPATH=.`. `con
 - CD (`.github/workflows/release.yml`): pushing tag `vX.Y.Z` (must equal `hcnn.__version__` and be on `master`) builds, tests the installed wheel from a source-free directory, and creates a GitHub Release. PyPI publishing via trusted publishing is opt-in (`vars.PUBLISH_TO_PYPI == 'true'`, environment `pypi`).
 - Branch `<type>/<topic>`; keep research changes and refactors in separate PRs. `.github/CODEOWNERS` maps architecture folders to owners.
 - PR descriptions: What / Why / Changes / Results impact / How it was checked, short and plain (`COMMIT_POLICY.md` §8, `pr-description` skill). Merge with merge commits, not squash.
+- **Never push, open or edit PRs, or change repository settings.** Draft commit messages and PR descriptions only when asked, commit locally if asked, and hand the push/`gh pr create` commands to the maintainer for review.
 
 ## Import map (old `src.*` → canonical)
 

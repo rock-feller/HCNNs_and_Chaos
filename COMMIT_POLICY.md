@@ -188,6 +188,10 @@ and link a `docs/` write-up for long evidence instead of pasting it.
 **Merging:** use **"Create a merge commit"**, not squash. The individually checked commits stay in
 the history, so `git bisect` can pinpoint which change moved a result.
 
+**AI-assisted work:** if you use an AI coding assistant (e.g. Claude Code), it drafts commit
+messages and PR descriptions only when asked, and never pushes, opens or edits a PR. A maintainer
+reviews the proposed commits and description, then pushes.
+
 ## 9. Cheat-sheet
 
 ```text

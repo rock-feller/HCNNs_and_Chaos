@@ -118,4 +118,6 @@ BREAKING CHANGE: code reading CellOutput.delta_term must use .correction
 3. Pick the **scope** from the paths.
 4. Write the header, the bullets, and for research types the *why* paragraph.
 5. Validate it: `printf '%s' "<message>" | python tools/check_commit_msg.py -`, and fix any error.
-6. Show the message. Commit only if the user asked you to commit (`git commit -F <file>`).
+6. Show the message for review. Commit locally only if the user asked you to commit
+   (`git commit -F <file>`). Never push; the user reviews the commits and pushes. For the PR, use
+   the `pr-description` skill.
