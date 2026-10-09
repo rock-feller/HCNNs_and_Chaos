@@ -1,90 +1,98 @@
-# HCNNs\_and\_Chaos
+# HCNNs and Chaos
 
-In this repo, you will find all the codes used in experiments from my PhD, focusing on the modeling of chaotic systems using Historical Consistent Neural Networks (HCNNs) and Recurrent Neural Networks (RNNs). The project includes support for both single-model and ensemble-based training pipelines implemented in PyTorch.
+`hcnn` is a PyTorch library for modeling and forecasting chaotic dynamical systems (Lorenz, Rössler,
+Chua, …) with **Historical Consistent Neural Networks (HCNNs)** and their variants, with RNN/LSTM
+baselines for comparison. It grew out of PhD research and is organised so that several people can
+develop different HCNN architectures in parallel.
 
-## Code Implementation Overview
+An HCNN keeps one state vector `s_t` holding the observed variables (first coordinates) and hidden
+variables. Over the observed past it is **teacher-forced**: the observed part of the state is
+corrected by the error `δ_t = y_t − C s_t`. Beyond the past it runs **autonomously** to forecast.
 
-The entire modeling stack has been restructured under a unified `src/` directory that houses all components: models, training logic, utilities, and ensemble handling. This design provides modularity, reusability, and clean separation between HCNN and RNN workflows, whether run as single models or ensembles.
+## Install
 
-## 📁 Project Structure
-
-```
-src
-├── data                         # Custom data generation and loading utilities
-├── ensembles                   # All ensemble model definitions
-│   ├── classics.py             # LSTM and RNN ensemble classes
-│   ├── hcnns.py                # Vanilla, PTF, LForm, LSpa HCNN ensemble classes
-├── ensemble_trainers           # Ensemble trainer implementations
-│   ├── classic_training.py    # RNN and LSTM ensemble training
-│   ├── hcnn_training.py       # HCNN ensemble training modules
-├── models                      # Single model definitions
-│   ├── classic.py             # RNN_Model and LSTM_Model implementations
-│   ├── HCNN
-│   │   ├── hcnn_models.py     # Vanilla, PTF, LSpa, and LForm HCNN variants
-│   │   ├── modules.py         # Core HCNN module definitions
-│   │   ├── utils/             # Custom layers, functions, and math utilities
-│   │   ├── visualization.py   # Visualization support for HCNN behavior
-├── model_utils                 # Shared utilities
-│   ├── custom_losses.py       # Log-cosh, MSE and other loss functions
-├── single_trainers             # Single-model trainer modules
-│   ├── classic_training.py    # RNNTrainer for single RNN/LSTM
-│   ├── hcnn_training.py       # Trainers for Vanilla, PTF, LSpa, LForm
+```bash
+# 1. PyTorch for your platform (CUDA / CPU / Apple MPS), see pytorch.org
+pip3 install torch
+# 2. hcnn, editable, with the test dependencies
+git clone https://github.com/rock-feller/HCNNs_and_Chaos.git && cd HCNNs_and_Chaos
+pip install -e ".[dev]"            # or ".[dev,notebooks]" for Jupyter + jupytext
 ```
 
-## 🧠 Modeling Support
+Python ≥ 3.10. Do not use `requirements.txt`; it is a machine-specific `pip freeze`.
 
-The framework supports both single-model and ensemble training for:
+## Quick start
 
-* **RNNs / LSTMs** via `models/classic.py` and `ensembles/classics.py`
-* **HCNN Variants**:
+```python
+import torch, hcnn
+from hcnn.core.training import HCNNTrainer
+from hcnn.utils.data_generation import LorenzSolver
+from hcnn.utils.data_preprocessing import SlidingWindowDataset, train_val_test_split
 
-  * `Vanilla_Model`
-  * `PTF_Model` (Partial Teacher Forcing)
-  * `LForm_Model` (LSTM Formulation of HCNN)
-  * `LSpa_Model` (Large Sparse HCNN)
+lorenz, _ = LorenzSolver(0.0, 60.0, (1.0, 0.0, 1.25), time_grid=0.01, burn_in=20.0)
+train, val, test, norm = train_val_test_split(lorenz, 0.6, 0.2, scaling_factor=0.02)
+loader = torch.utils.data.DataLoader(SlidingWindowDataset(train, window_size=100), batch_size=32)
 
-These are implemented under `models/HCNN/` and `ensembles/hcnns.py`, with modular training logic handled separately for single and ensemble variants.
+model = hcnn.build_model("lform", n_obs_vars=3, n_hid_vars=20)        # any registered architecture
+trainer = HCNNTrainer(model, learning_rate=1e-2)
+trainer.train_and_validate(loader, num_epochs=150, calibration_window=val[:200], val_data=val[200:500])
+trainer.restore_best()
 
-## 🎯 Training Modes
+forecast = model.eval()(test[:200].unsqueeze(0), forecast_horizon=300).forecasts   # (1, 300, 3)
+```
 
-Each model (RNN, LSTM, or HCNN) can be trained via its respective trainer:
+## Architectures
 
-* **Single-model training** (under `single_trainers/`):
+Each lives in its own package under [`hcnn/architectures/`](hcnn/architectures/README.md), with its
+own README, tests and tutorial.
 
-  * `RNNTrainer` for `RNN_Model` or `LSTM_Model`
-  * `HCNNTrainer` for Vanilla HCNN  and related variants
+| Name | Transition | Idea |
+|---|---|---|
+| [`vanilla`](hcnn/architectures/vanilla/README.md) | `s_{t+1} = A tanh(s_t − Cᵀδ_t)` | the reference HCNN |
+| [`ptf`](hcnn/architectures/ptf/README.md) | dropout on `δ_t`, scheduled over epochs | partial teacher forcing |
+| [`lform`](hcnn/architectures/lform/README.md) | `s_{t+1} = r_t + D(A tanh(r_t) − r_t)` | diagonal memory gate |
+| [`lspa`](hcnn/architectures/lspa/README.md) | `s_{t+1} = (M⊙A) tanh(r_t)` | sparse transition for large states |
 
-* **Ensemble training** (under `ensemble_trainers/`):
+```python
+hcnn.list_architectures()                    # ['lform', 'lspa', 'ptf', 'vanilla']
+ens = hcnn.build_ensemble("ptf", n_ensemble=10, n_obs_vars=3, n_hid_vars=20, seed=0)
+ens.predict_with_uncertainty(window, forecast_horizon=300)   # mean, variance, agreement
+```
 
-  * `ClassicEnsembleTrainer` for RNNs and LSTMs
-  * `HCNNEnsembleTrainer` variants for HCNNs (Vanilla, PTF, LForm, LSpa)
+## Tutorials
 
-Each trainer supports:
+Short, runnable scripts in [`tutorials/`](tutorials/README.md): the data pipeline (00), one per
+architecture (01–04), ensembles and uncertainty (05), and comparing all architectures (06).
 
-* `train_only`: Trains on training data and tracks best model based on training loss.
-* `train_validate`: Uses calibration and forecast windows to validate predictions and save models based on best validation performance.
+```bash
+python tutorials/01_vanilla_hcnn.py
+```
 
-## 📊 Result Tracking
+## Repository layout
 
-Every training run automatically generates a result directory containing:
+```text
+hcnn/
+├── core/            shared framework: base classes + the one rollout, registry, layers,
+│                    generic ensemble, trainers
+├── architectures/   one self-contained package per HCNN variant (+ _template/ for new ones)
+├── baselines/       RNN / LSTM comparison models
+└── utils/           data generation, preprocessing, plotting, checkpoints
+tests/               pytest suite; test_architecture_contract.py runs on every architecture
+tutorials/           runnable examples (smoke-tested in CI)
+docs/                research notes and topic proposals
+*.ipynb              research notebooks (older workflow; import from chaotic_data/ and data_utils/)
+```
 
-* **Trained Models** (`.pth` files): Best performing checkpoint
-* **Epoch Loss Logs** (`epoch_losses.json`): Per-epoch training/validation loss
-* **Forecast Outputs** (`forecast_results_epoch_*.csv`): Predicted vs true values for each epoch
+## Contributing
 
-## ⚙️ Preprocessing & Utilities
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the invariants every change must keep, and the PR
+workflow, and [`COMMIT_POLICY.md`](COMMIT_POLICY.md) for commit messages. To add an architecture,
+follow [`hcnn/architectures/README.md`](hcnn/architectures/README.md).
 
-The `data` and `data_prep` modules (now folded into `src/`) include:
+```bash
+pytest -q          # full suite, including the tutorials in fast mode
+```
 
-* `SlidingWindowDataset`, `InpTarg_TSDataset` for batching
-* `Normalization_Strategy` for scaling and centering
-* `contextwindow_testdata_generator` for creating calibration + forecast sequences
+## License
 
-## 🚀 GPU/MPS Optimization
-
-The code is compatible with:
-
-* **NVIDIA CUDA GPUs**
-* **Apple M Series with Metal (MPS)**
-
-Automatic device detection ensures optimal hardware acceleration for training and inference workflows.
+MIT, see [`LICENSE`](LICENSE).

@@ -1,6 +1,7 @@
 <!--
-PR guide: fill in every section. See CONTRIBUTING.md for the full workflow and
-rules_for_commit.md for the commit-message convention. Keep PRs focused.
+PR guide: fill in every section. See CONTRIBUTING.md for the workflow and
+COMMIT_POLICY.md for the commit / PR-title convention. Keep PRs focused.
+The PR TITLE must follow the commit format, e.g. `arch(lform): gate externals with D`.
 -->
 
 ## Summary
@@ -9,20 +10,25 @@ rules_for_commit.md for the commit-message convention. Keep PRs focused.
 state the mathematical / architectural motivation and reference the paper section
 or issue. -->
 
+## Architecture(s) / area touched
+
+<!-- e.g. `lform` only · new architecture `<name>` · shared `core` (affects all) -->
+
 ## Type of change
 
-<!-- Tick all that apply. These mirror the commit types in rules_for_commit.md. -->
+<!-- Tick all that apply. These mirror the commit types in COMMIT_POLICY.md. -->
 
 - [ ] `math` — core equations / loss / constraints
-- [ ] `arch` — network architecture (layers, cells, activations)
+- [ ] `arch` — architecture (new variant, cells, layers, gates)
 - [ ] `data` — data pipeline / generators / normalization
 - [ ] `hparam` — hyperparameters / seeds / run configs
+- [ ] `exp` — experiments / notebooks / results
 - [ ] `feat` — new software feature
 - [ ] `fix` — bug fix
 - [ ] `perf` — performance improvement
 - [ ] `refactor` — structure only, no behavior change
-- [ ] `docs` — documentation only
-- [ ] `test` — tests only
+- [ ] `docs` / `test` / `build` / `ci` / `chore`
+- [ ] **Breaking change** (public API or checkpoint compatibility) — described below
 
 ## Related issues / references
 
@@ -30,27 +36,31 @@ or issue. -->
 
 ## How was this tested?
 
-<!-- Commands run and their result. At minimum: -->
-
-- [ ] `PYTHONPATH=. pytest tests/ -q` passes locally
+- [ ] `pytest -q` passes locally (includes the architecture contract and tutorials in fast mode)
 - [ ] Added/updated tests in `tests/` that cover this change
-- [ ] (if runtime behavior) ran `python run_data_run_vanilla_model.py` or an
-      equivalent end-to-end check
+- [ ] (if runtime behavior) ran the relevant tutorial in full, e.g. `python tutorials/01_vanilla_hcnn.py`
 
 <!-- Paste key output (loss curves, test summary, before/after numbers). -->
 
+## New architecture checklist (skip otherwise)
+
+- [ ] Package in `hcnn/architectures/<name>/` with a filled-in `README.md`
+- [ ] Architecture-specific tests in `tests/architectures/test_<name>.py`
+- [ ] Tutorial `tutorials/NN_<name>_hcnn.py`
+- [ ] `.github/CODEOWNERS` line for the folder, test and tutorial
+
 ## Architecture-invariant checklist
 
-<!-- These are the load-bearing invariants (see CONTRIBUTING.md §3). Confirm your
-change preserves them, or explain below why it must break one. -->
+<!-- See CONTRIBUTING.md §3. Confirm your change preserves them, or explain below
+why it must break one. -->
 
-- [ ] Rollout still lives once in `BaseHCNNModel.forward` (no per-variant forward)
+- [ ] Rollout still lives once in `BaseHCNNModel.forward` (no per-architecture forward)
 - [ ] Standard device semantics (no auto-grab of MPS/CUDA in layers)
 - [ ] Data flow is leakage-safe (normalization fit on train only; val ≠ test)
 - [ ] New trainers subclass `BaseTrainer` (no copied training loop)
-- [ ] Baselines stay in `hcnn.baselines`, not `hcnn.core`
+- [ ] Baselines stay in `hcnn.baselines`
 
 ## Commit hygiene
 
-- [ ] Commits follow `rules_for_commit.md` (`type(scope): imperative summary`)
+- [ ] Commits and PR title follow `COMMIT_POLICY.md` (`type(scope): imperative summary`)
 - [ ] PR is focused (not a mix of unrelated math + refactor changes)

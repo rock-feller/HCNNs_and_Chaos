@@ -1,109 +1,137 @@
 # Contributing to `hcnn`
 
-Thanks for contributing! This guide covers how to set up your environment, run the
-regression suite, follow our commit conventions, and open a clean pull request.
-
-`hcnn` is a research library for modeling dynamical systems with Historical
-Consistent Neural Networks (HCNNs) and baseline sequence models. Correctness and
-reproducibility matter more than speed of merging — a PR that adds a feature but
-weakens the leakage-safety or the recurrence contract will be sent back.
+`hcnn` is a research library for modeling chaotic dynamical systems with Historical Consistent
+Neural Networks (HCNNs). Several people work on different HCNN architectures in parallel.
+Correctness and reproducibility matter more than speed of merging. A PR that adds a feature but
+weakens leakage-safety or the shared recurrence contract will be sent back.
 
 ---
 
-## 1. Environment setup
-
-We develop against a dedicated conda environment. **Do not** `pip install -r
-requirements.txt` — that file is a full-system `pip freeze` and is not installable
-on macOS or in CI. Use `requirements-dev.txt`.
+## 1. Set up once
 
 ```bash
-conda create -y -n hcnn_env python=3.11
-conda activate hcnn_env
+git clone https://github.com/rock-feller/HCNNs_and_Chaos.git && cd HCNNs_and_Chaos
+conda create -y -n hcnn_env python=3.11 && conda activate hcnn_env
 
-# Install a stable PyTorch first (platform-specific):
-pip3 install torch                                            # local: CUDA / Apple MPS
-# or, for a CPU-only box / CI:
-# pip install torch --index-url https://download.pytorch.org/whl/cpu
+# PyTorch first, for your platform:
+pip3 install torch                                                   # CUDA / Apple MPS
+# pip install torch --index-url https://download.pytorch.org/whl/cpu  # CPU only
 
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"                     # hcnn (editable) + pytest
+git config core.hooksPath .githooks         # commit-message check on every commit
+git config commit.template .gitmessage      # commit-message skeleton in your editor
 ```
 
-## 2. Running the tests (do this before every PR)
+Do **not** `pip install -r requirements.txt`. It is a full-system `pip freeze` and is not installable
+on macOS or in CI.
 
-The canonical suite lives in `tests/` and imports the **real** package (the legacy
-`test/` directory tests private copies and is not maintained — ignore it).
+## 2. Where your work goes
 
-```bash
-PYTHONPATH=. pytest tests/ -q
+```text
+hcnn/
+├── core/            shared framework: base classes + THE rollout, registry, layers,
+│                    generic ensemble, trainers. Owned by the maintainer; changes
+│                    affect every architecture.
+├── architectures/   one package per HCNN variant: vanilla/ ptf/ lform/ lspa/ ...
+│   └── _template/   copy this to start a new architecture
+├── baselines/       RNN / LSTM comparison models (not part of the HCNN method)
+└── utils/           data generation, preprocessing, plotting, checkpoints
+tests/
+├── test_architecture_contract.py   runs against EVERY registered architecture
+├── architectures/test_<name>.py    architecture-specific tests
+└── ...                             data, layers, ensembles, trainer, registry, tutorials
+tutorials/           one runnable script per architecture/topic (smoke-tested in CI)
 ```
 
-The end-to-end demo is a quick sanity check that the full pipeline runs:
+**Working on one architecture** means touching only `hcnn/architectures/<name>/`,
+`tests/architectures/test_<name>.py` and `tutorials/NN_<name>_hcnn.py`. You don't need to edit
+any shared file, so parallel work doesn't conflict.
 
-```bash
-PYTHONPATH=. python run_data_run_vanilla_model.py
-```
+**Adding a new architecture:** follow the step-by-step guide in
+[`hcnn/architectures/README.md`](hcnn/architectures/README.md). In short: copy `_template/`,
+implement the cell, add tests and a tutorial, and add yourself to `.github/CODEOWNERS`.
 
-CI (GitHub Actions, `.github/workflows/ci.yml`) runs `pytest tests/` on Python 3.11
-and 3.12 for every push to `master` and every pull request. **A PR cannot merge
-with red CI.**
+**Changing `hcnn/core/`** (the rollout, base classes, trainer, registry) affects everyone. Open a
+separate PR for it, explain why in the description, and expect a maintainer review.
 
 ## 3. Architecture invariants (please preserve these)
 
-These are the load-bearing design decisions. If your change needs to break one,
-call it out explicitly in the PR and explain why.
+These are the load-bearing design decisions. Most are checked automatically by
+`tests/test_architecture_contract.py`. If your change needs to break one, call it out explicitly in
+the PR.
 
-- **The rollout lives once** in `BaseHCNNModel.forward`. Cells return a unified
-  `CellOutput`; models are thin cell-wrappers. Do not add a per-variant `forward`.
+- **The rollout lives once** in `BaseHCNNModel.forward`. Cells return a `CellOutput`; models are
+  thin wrappers that build their cell. Never add a per-architecture `forward`.
+- **Observation matrix `C = [I | 0]`:** `expectation = C s_t`, and teacher forcing corrects the state
+  by `−Cᵀ δ_t`. Forecasting uses no ground truth.
 - **Standard device semantics.** Layers build on the default device; the user calls
-  `model.to(device)`. Do not auto-detect/grab MPS/CUDA inside a layer.
-- **Leakage-safe data.** Split train/test *before* fitting normalization
-  (`NormalizationStrategy.fit` on train only); generate trajectories with a
-  `burn_in`; never select models on the final test set.
-- **Trainers share `BaseTrainer`.** New model families add a trainer by subclassing
-  it and implementing `_batch_loss` / `_forecast` — not by copying the loop.
-- **Baselines are separate.** RNN/LSTM comparison code lives in `hcnn.baselines`,
-  not `hcnn.core`.
+  `model.to(device)`. Never auto-detect or grab MPS/CUDA inside a layer.
+- **Leakage-safe data.** Use a burn-in, split chronologically *before* fitting normalization
+  (`train_val_test_split` or `NormalizationStrategy.fit` on train only), select models on
+  validation, and touch the test set once.
+- **Trainers share `BaseTrainer`.** New model families implement `_batch_loss` / `_forecast`; they
+  do not copy the loop.
+- **Baselines stay in `hcnn.baselines`,** not in `hcnn.core` or `hcnn.architectures`.
 
-New behavior should come with a test in `tests/` that would fail without it.
+## 4. Before every PR
 
-## 4. Commit messages
-
-We follow the Conventional-Commits-based rules in
-[`rules_for_commit.md`](rules_for_commit.md). In short:
-
-```
-<type>(<scope>): <imperative summary, <=50 chars, no trailing period>
-
-<body: explain the WHY — math/hyperparameter/architecture rationale>
-
-<footer: Fixes #123 / paper section refs>
+```bash
+pytest -q                                              # full suite, incl. tutorials in fast mode
+pytest tests/test_architecture_contract.py -k lform    # just one architecture's contract
+pytest tests/architectures/test_lform.py               # just one architecture's own tests
+python tutorials/03_lform_hcnn.py                      # a real (non-fast) end-to-end run
 ```
 
-Allowed types: `math`, `arch`, `data`, `hparam`, `feat`, `fix`, `docs`, `perf`,
-`refactor`, `test`. Common scopes: `forecaster`, `trainer`, `priors`, `ensembles`,
-`layers`, `data`, `pkg`, a specific system (`lorenz`, …). Keep the subject under 72
-characters, imperative mood, no trailing period. See `rules_for_commit.md` for the
-full type table and examples.
+CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.12 for every push to `master`
+and every PR, and checks the commit messages and PR title. **A PR cannot merge with red CI.**
 
-## 5. Branch & PR workflow
+New behaviour comes with a test in `tests/` that would fail without it. For an architecture,
+re-derive one step of the recurrence by hand from the cell's own weights (see
+`tests/architectures/test_vanilla.py`).
 
-1. Branch from `master`: `git checkout -b <type>/<short-topic>`
-   (e.g. `feat/mamba-cell`, `fix/sparse-mask-device`).
-2. Make focused commits following the rules above.
-3. Run `pytest tests/ -q` locally — it must be green.
-4. Push and open a PR. The description is auto-populated from
-   [`.github/pull_request_template.md`](.github/pull_request_template.md) — fill in
-   every section (summary, type, testing evidence, checklist).
-5. Keep PRs focused. A PR that mixes a math change with a large refactor is hard to
-   review and hard to bisect later; split them.
+## 5. Commits
 
-## 6. What a reviewer looks for
+Follow [`COMMIT_POLICY.md`](COMMIT_POLICY.md). The hook from §1 checks every message locally. In
+short:
 
-- Tests added/updated and CI green.
-- Commit messages follow the convention (types distinguish math changes from
-  engineering).
-- No regression of the invariants in §3 (leakage, device, single rollout).
-- The "why" is explained — especially for changed constants, learning rates, or
-  architectural blocks.
+```text
+<type>(<scope>): <imperative summary, <=50 chars, no period>
+
+- <Past-tense verb> <what changed>
+- <Past-tense verb> <what changed>
+
+<Why: required for research types (math/arch/data/hparam/exp)>
+```
+
+- **Research types** (`math`, `arch`, `data`, `hparam`, `exp`) mark commits that may change
+  results. **Engineering types** (`feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`,
+  `style`, `chore`) must not.
+- **Scope** = your architecture's package name when the change is confined to it (`arch(lform): …`),
+  so `git log --grep '(lform)'` shows your history.
+- The type also sets the version bump (`COMMIT_POLICY.md` §6).
+
+If you use Claude Code, the `commit-message` skill in `.claude/skills/` drafts messages that follow
+this policy.
+
+## 6. Branch and PR workflow
+
+1. Branch from `master`: `git checkout -b <type>/<short-topic>`, e.g. `arch/gated-sparse`,
+   `fix/lspa-mask-reload`.
+2. Make focused commits following §5.
+3. Run `pytest -q` locally. It must be green.
+4. Push and open a PR. Its title follows the commit format (it becomes the squash-merge commit). The
+   description template (`.github/pull_request_template.md`) asks for the summary, the type, testing
+   evidence and the invariant checklist.
+5. Keep PRs focused. A PR that mixes a math change with a large refactor is hard to review and hard
+   to bisect later, so split them.
+
+## 7. What a reviewer looks for
+
+- Tests added or updated, and CI green (including the architecture contract and tutorials).
+- Commit messages and PR title follow the policy. The type tells research and engineering changes
+  apart.
+- No regression of the invariants in §3.
+- The "why" is explained, especially for changed constants, learning rates, or architectural blocks.
+- For a new architecture: README filled in, tutorial added, CODEOWNERS line added.
 
 Thank you for keeping the research codebase clean, reproducible, and structured!
