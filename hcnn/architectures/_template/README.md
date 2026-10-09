@@ -8,7 +8,7 @@ TODO: two or three sentences — what problem does this variant address, and how
 
 ## Recurrence
 
-With `δ_t = y_t − C s_t` (teacher forcing) and `r_t = s_t − Cᵀ δ_t`:
+With `ŷ_t = C s_t` and, under teacher forcing, `r_t = s_t − Cᵀ (ŷ_t − y_t)` (the observed part of `r_t` is the data):
 
 ```
 s_{t+1} = TODO

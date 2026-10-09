@@ -92,6 +92,19 @@ def test_cell_returns_celloutput_in_both_modes(spec):
     assert auto.delta_term is None
 
 
+def test_teacher_forcing_replaces_observed_coordinates(spec):
+    """r_t = s_t - C^T (y_pred - y_true): the observed part of r_t IS the data, so under
+    teacher forcing the next state cannot depend on the model's own observed coordinates."""
+    cell = spec.cell_cls(n_obs_vars=N_OBS, n_hid_vars=N_HID).eval()  # eval: no PTF dropout
+    obs = torch.randn(4, N_OBS)
+    a = torch.randn(4, N_STATE)
+    b = a.clone()
+    b[:, :N_OBS] = torch.randn(4, N_OBS)  # different predictions, same hidden state
+    na = cell(a, teacher_forcing=True, observation=obs).next_state
+    nb = cell(b, teacher_forcing=True, observation=obs).next_state
+    assert torch.allclose(na, nb, atol=1e-6)
+
+
 def test_teacher_forcing_uses_the_observation(spec):
     cell = spec.cell_cls(n_obs_vars=N_OBS, n_hid_vars=N_HID).eval()  # eval: no PTF dropout
     state = torch.randn(4, N_STATE)

@@ -11,10 +11,10 @@ it runs autonomously.
 
 ## Recurrence
 
-With `C = [I | 0]`, `ŷ_t = C s_t` and `δ_t = y_t − ŷ_t`:
+With `C = [I | 0]` and `ŷ_t = C s_t`:
 
 ```
-r_t     = s_t − Cᵀ δ_t          (teacher forcing; r_t = s_t when forecasting)
+r_t     = s_t − Cᵀ (ŷ_t − y_t)  (teacher forcing: observed part of r_t = y_t; r_t = s_t when forecasting)
 s_{t+1} = A tanh(r_t) [+ B u_t]
 ```
 

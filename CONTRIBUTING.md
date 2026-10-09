@@ -62,8 +62,9 @@ the PR.
 
 - **The rollout lives once** in `BaseHCNNModel.forward`. Cells return a `CellOutput`; models are
   thin wrappers that build their cell. Never add a per-architecture `forward`.
-- **Observation matrix `C = [I | 0]`:** `expectation = C s_t`, and teacher forcing corrects the state
-  by `−Cᵀ δ_t`. Forecasting uses no ground truth.
+- **Observation matrix `C = [I | 0]`:** `expectation = C s_t`, and teacher forcing sets
+  `r_t = s_t − Cᵀ(ŷ_t − y_t)`, so the observed part of `r_t` *is* the data. Forecasting uses no
+  ground truth.
 - **Standard device semantics.** Layers build on the default device; the user calls
   `model.to(device)`. Never auto-detect or grab MPS/CUDA inside a layer.
 - **Leakage-safe data.** Use a burn-in, split chronologically *before* fitting normalization

@@ -273,8 +273,10 @@ class PTFHCNNCell(BaseHCNNCell):
             partial_delta_term = self.dropout_module(delta_term)
 
             # Apply teacher forcing correction using partial delta
+            # r_t = s_t + C^T (m_t * delta_t): observed coordinates whose correction was kept are
+            # replaced by y_true; dropped ones (m_t = 0) keep the model's own prediction.
             teach_forc = torch.matmul(partial_delta_term, torch.as_tensor(self.ConMat, device=partial_delta_term.device))
-            corrected_state = state - teach_forc
+            corrected_state = state + teach_forc
 
             # Compute next state with correction
             next_state = self.A(torch.tanh(corrected_state)) + external_contribution
