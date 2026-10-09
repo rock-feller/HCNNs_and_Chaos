@@ -1,0 +1,4 @@
+#!/bin/sh
+# Validate the commit message against COMMIT_POLICY.md.
+# Enable once per clone:  git config core.hooksPath .githooks
+exec python3 "$(git rev-parse --show-toplevel)/tools/check_commit_msg.py" "$1"

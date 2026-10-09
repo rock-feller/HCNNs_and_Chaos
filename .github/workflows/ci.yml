@@ -1,8 +1,10 @@
 name: CI
 
 # Regression gate: run the canonical test suite on every push to master and on
-# every pull request. Keeps the HCNN recurrence, data pipeline (leakage/burn-in),
-# trainers, and ensembles from silently breaking.
+# every pull request. Keeps the HCNN recurrence, the architecture contract, the
+# data pipeline (leakage/burn-in), trainers, ensembles and tutorials from
+# silently breaking. On pull requests, also check commit messages against
+# COMMIT_POLICY.md.
 
 on:
   push:
@@ -36,8 +38,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Install project dependencies
-        run: pip install -r requirements-dev.txt
+      - name: Install hcnn with dev extras
+        run: pip install -e ".[dev]"
 
-      - name: Run test suite
-        run: PYTHONPATH=. pytest tests/ -q --durations=10
+      - name: Run test suite (includes the tutorials in fast mode)
+        run: pytest -q --durations=10
+
+  commit-messages:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check every commit in the PR
+        run: |
+          python3 tools/check_commit_msg.py \
+            --range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      - name: Check the PR title (it becomes the squash-merge commit)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | python3 tools/check_commit_msg.py --header-only -
