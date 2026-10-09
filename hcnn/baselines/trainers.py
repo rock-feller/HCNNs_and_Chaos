@@ -22,6 +22,9 @@ class SequenceModelTrainer(BaseTrainer):
         return self.loss_fn(self.model(inp).outputs, target)
 
     def _forecast(self, calibration_window: torch.Tensor, horizon: int) -> torch.Tensor:
+        # One window (T, n_obs) or a batch of windows (n_windows, T, n_obs).
+        if calibration_window.dim() == 3:
+            return self.model.forecast(calibration_window, horizon)
         return self.model.forecast(calibration_window.unsqueeze(0), horizon).squeeze(0)
 
 

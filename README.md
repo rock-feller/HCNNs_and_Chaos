@@ -6,8 +6,8 @@ baselines for comparison. It grew out of PhD research and is organised so that s
 develop different HCNN architectures in parallel.
 
 An HCNN keeps one state vector `s_t` holding the observed variables (first coordinates) and hidden
-variables. Over the observed past it is **teacher-forced**: the observed part of the state is
-corrected by the error `δ_t = y_t − C s_t`. Beyond the past it runs **autonomously** to forecast.
+variables. Over the observed past it is **teacher-forced**: `r_t = s_t − Cᵀ(C s_t − y_t)` replaces
+the observed part of the state with the data. Beyond the past it runs **autonomously** to forecast.
 
 ## Install
 
@@ -48,7 +48,7 @@ own README, tests and tutorial.
 
 | Name | Transition | Idea |
 |---|---|---|
-| [`vanilla`](hcnn/architectures/vanilla/README.md) | `s_{t+1} = A tanh(s_t − Cᵀδ_t)` | the reference HCNN |
+| [`vanilla`](hcnn/architectures/vanilla/README.md) | `s_{t+1} = A tanh(s_t − Cᵀ(ŷ_t − y_t))` | the reference HCNN |
 | [`ptf`](hcnn/architectures/ptf/README.md) | dropout on `δ_t`, scheduled over epochs | partial teacher forcing |
 | [`lform`](hcnn/architectures/lform/README.md) | `s_{t+1} = r_t + D(A tanh(r_t) − r_t)` | diagonal memory gate |
 | [`lspa`](hcnn/architectures/lspa/README.md) | `s_{t+1} = (M⊙A) tanh(r_t)` | sparse transition for large states |

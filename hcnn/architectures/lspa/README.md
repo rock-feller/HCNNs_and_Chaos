@@ -11,7 +11,7 @@ with a few others.
 ## Recurrence
 
 ```
-r_t     = s_t − Cᵀ δ_t
+r_t     = s_t − Cᵀ (ŷ_t − y_t)
 s_{t+1} = (M ⊙ A) tanh(r_t) [+ B u_t]       M ∈ {0,1}^{n_state × n_state} fixed at init
 ```
 

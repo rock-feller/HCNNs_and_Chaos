@@ -1,4 +1,4 @@
-"""Vanilla HCNN: the cell implements s_{t+1} = A tanh(s_t - C^T delta_t)."""
+"""Vanilla HCNN: s_{t+1} = A tanh(r_t), r_t = s_t - C^T (y_pred - y_true)."""
 import torch
 
 from hcnn.architectures.vanilla import VanillaHCNNCell
@@ -16,7 +16,9 @@ def test_teacher_forced_step_matches_formula():
 
     exp_ref = state @ C.T
     delta_ref = obs - exp_ref
-    next_ref = torch.tanh(state - delta_ref @ C) @ cell.A.weight.T
+    r_ref = state - (exp_ref - obs) @ C          # observed part of r_t equals the data
+    assert torch.allclose(r_ref[:, :N_OBS], obs, atol=1e-6)
+    next_ref = torch.tanh(r_ref) @ cell.A.weight.T
 
     assert torch.allclose(co.expectation, exp_ref, atol=1e-6)
     assert torch.allclose(co.delta_term, delta_ref, atol=1e-6)

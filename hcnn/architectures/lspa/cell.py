@@ -197,8 +197,9 @@ class LSpaHCNNCell(BaseHCNNCell):
             delta_term = observation - expectation
 
             # Apply teacher forcing correction
+            # r_t = s_t - C^T (y_pred - y_true) = s_t + C^T delta_t: the observed part of r_t equals y_t
             teach_forc = torch.matmul(delta_term, torch.as_tensor(self.ConMat, device=delta_term.device))
-            corrected_state = state - teach_forc
+            corrected_state = state + teach_forc
 
             # Compute next state using sparse transformation
             next_state = self.Sparse_A(torch.tanh(corrected_state)) + external_contribution

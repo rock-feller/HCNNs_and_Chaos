@@ -17,9 +17,9 @@ class Vanilla_Model(BaseHCNNModel):
     """
     Vanilla HCNN: standard teacher forcing with a nonlinear tanh state transition.
 
-    Transition:  ``s_{t+1} = A * tanh(s_t - C^T delta_t)``  (delta_t = y_t - C s_t
-    during teacher forcing, else the correction term vanishes and the rollout is
-    autonomous).
+    Transition:  ``s_{t+1} = A * tanh(r_t)`` with ``r_t = s_t - C^T (C s_t - y_t)`` during
+    teacher forcing (the observed part of ``r_t`` is the data ``y_t``), and ``r_t = s_t``
+    in the autonomous rollout.
     """
 
     def __init__(

@@ -6,7 +6,7 @@ framework in `hcnn/core/` stays out of the way.
 
 | Architecture | Package | Transition | Tutorial |
 |---|---|---|---|
-| Vanilla | [`vanilla/`](vanilla/README.md) | `s_{t+1} = A tanh(s_t − Cᵀδ_t)` | `tutorials/01_vanilla_hcnn.py` |
+| Vanilla | [`vanilla/`](vanilla/README.md) | `s_{t+1} = A tanh(s_t − Cᵀ(ŷ_t − y_t))` | `tutorials/01_vanilla_hcnn.py` |
 | Partial Teacher Forcing | [`ptf/`](ptf/README.md) | vanilla with scheduled dropout on `δ_t` | `tutorials/02_ptf_hcnn.py` |
 | LSTM formulation | [`lform/`](lform/README.md) | `s_{t+1} = r_t + D(A tanh(r_t) − r_t)` | `tutorials/03_lform_hcnn.py` |
 | Large-Sparse | [`lspa/`](lspa/README.md) | `s_{t+1} = (M⊙A) tanh(r_t)` | `tutorials/04_lspa_hcnn.py` |

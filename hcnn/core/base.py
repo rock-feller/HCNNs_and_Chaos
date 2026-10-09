@@ -191,8 +191,10 @@ class BaseHCNNModel(nn.Module, ABC):
         1. **Calibration** over the observed ``data_window`` with teacher forcing
            (the cell sees the ground-truth observation at each step).
         2. **Forecast** (optional) for ``forecast_horizon`` steps in autonomous
-           mode (``teacher_forcing=False``) - the model is fed only its own state,
-           so there is no target leakage.
+           mode (``teacher_forcing=False``), starting from ``s_T`` (the state after the
+           last teacher-forced step) - the model is fed only its own state, so there is
+           no target leakage. ``forecasts[:, k]`` predicts the observation ``k`` steps
+           after the end of ``data_window``.
 
         Variant-specific outputs (e.g. PTF's ``partial_delta_terms``) are carried
         through ``CellOutput.extras`` and assembled by :meth:`_pack_output`.
@@ -241,9 +243,10 @@ class BaseHCNNModel(nn.Module, ABC):
             if co.extras:
                 for k, v in co.extras.items():
                     extras_lists.setdefault(k, []).append(v)
-            # state[t] already recorded; advance to state[t+1] for t < seq_len-1
+            # states[t] = s_t is already recorded; advance to s_{t+1}. The step after the
+            # last observation, s_T = f(r_{T-1}), is where the forecast starts.
+            current_state = co.next_state
             if t < seq_len - 1:
-                current_state = co.next_state
                 states_list.append(current_state)
 
         states = torch.stack(states_list, dim=1)
@@ -252,12 +255,15 @@ class BaseHCNNModel(nn.Module, ABC):
         extras = {k: torch.stack(v, dim=1) for k, v in extras_lists.items()}
 
         # --- Forecast: autonomous rollout (no teacher forcing) ---
+        # Starts from s_T, the state produced by the LAST teacher-forced step, so the last
+        # observation is used and forecasts[:, k] = C s_{T+k} predicts y_{T+k}.
+        # future_states[:, k] = s_{T+k} is aligned with forecasts[:, k] (as states with
+        # expectations).
         forecasts = None
         future_states = None
         if forecast_horizon and forecast_horizon > 0:
             forecasts_list = []
             future_states_list = []
-            current_state = states[:, seq_len - 1, :]
             for t in range(forecast_horizon):
                 ext_f = future_externals[:, t, :] if future_externals is not None else None
                 co = self.cell(
@@ -267,7 +273,7 @@ class BaseHCNNModel(nn.Module, ABC):
                     **cell_kwargs
                 )
                 forecasts_list.append(co.expectation)
-                future_states_list.append(co.next_state)
+                future_states_list.append(current_state)
                 current_state = co.next_state
             forecasts = torch.stack(forecasts_list, dim=1)
             future_states = torch.stack(future_states_list, dim=1)

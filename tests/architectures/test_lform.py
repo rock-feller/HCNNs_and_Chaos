@@ -9,7 +9,7 @@ C = torch.eye(N_OBS, N_STATE)
 
 
 def _corrected(state, obs):
-    return state - (obs - state @ C.T) @ C
+    return state - (state @ C.T - obs) @ C   # r_t = s_t - C^T (y_pred - y_true)
 
 
 def test_reduces_to_memory_when_gate_closed():

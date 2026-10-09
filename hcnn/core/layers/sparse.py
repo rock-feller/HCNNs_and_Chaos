@@ -100,8 +100,10 @@ class CustomSparseLinear(nn.Linear):
         # Re-initialize parameters with sparsity
         self._initialize_parameters()
 
-        # Register backward hook to maintain sparsity during training
-        self._register_gradient_hook()
+        # No gradient hook is needed: forward() uses weight * mask, so autograd already
+        # gives masked entries a zero gradient. (A former hook also clipped this layer's
+        # gradient to norm 1.0 and replaced NaN/inf with 0, silently - use the trainer's
+        # explicit `grad_clip` instead, so all architectures train under the same rules.)
 
     def _create_sparsity_mask(self):
         """Create sparsity mask based on mask_type and sparsity ratio."""
@@ -120,8 +122,19 @@ class CustomSparseLinear(nn.Linear):
         else:
             raise ValueError(f"Unknown mask_type: {self.mask_type}")
 
-        # Register as buffer (non-trainable parameter)
-        self.register_buffer('sparsity_mask', mask, persistent=False)
+        # Persistent: the mask is part of the model. It is drawn at random at construction,
+        # so a reloaded model must get the SAME mask back from the checkpoint.
+        self.register_buffer('sparsity_mask', mask, persistent=True)
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+        # Checkpoints saved before the mask was persistent lack it; their weights were
+        # already zeroed outside the mask, so recover it from the non-zero pattern.
+        key = prefix + "sparsity_mask"
+        if key not in state_dict and (prefix + "weight") in state_dict:
+            state_dict[key] = (state_dict[prefix + "weight"] != 0).to(self.sparsity_mask.dtype)
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict,
+                                      missing_keys, unexpected_keys, error_msgs)
 
     def _create_random_mask(self) -> torch.Tensor:
         """Create random sparsity mask across entire weight matrix."""
@@ -173,36 +186,6 @@ class CustomSparseLinear(nn.Linear):
 
         return mask
 
-    def _register_gradient_hook(self):
-        """Register backward hook to mask gradients and prevent NaN values."""
-        def gradient_hook(grad):
-            if grad is not None:
-                # Convert mask to proper tensor type
-                mask_tensor = torch.as_tensor(self.sparsity_mask, dtype=grad.dtype, device=grad.device)
-
-                # Mask gradients for sparse weights (zero out gradients for sparse positions)
-                masked_grad = grad * mask_tensor
-
-                # Prevent NaN and inf values
-                masked_grad = torch.where(
-                    torch.isfinite(masked_grad),
-                    masked_grad,
-                    torch.zeros_like(masked_grad)
-                )
-
-                # Adaptive gradient clipping to prevent exploding gradients
-                grad_norm = torch.norm(masked_grad)
-                max_grad_norm = 1.0  # Conservative clipping threshold
-
-                if grad_norm > max_grad_norm:
-                    masked_grad = masked_grad * (max_grad_norm / (grad_norm + 1e-8))
-
-                return masked_grad
-            return grad
-
-        # Register the hook
-        self.weight.register_hook(gradient_hook)
-
     def reset_parameters(self) -> None:
         """Override to prevent automatic initialization during super().__init__()."""
         # Only initialize if sparsity_mask exists (i.e., after _create_sparsity_mask)
@@ -251,12 +234,9 @@ class CustomSparseLinear(nn.Linear):
         torch.Tensor
             Output tensor of shape `(batch_size, n_state_vars)`
         """
-        # Apply sparsity mask to weights before forward pass
-        # This ensures sparsity is maintained even if gradients somehow update sparse weights
-        with torch.no_grad():
-            self.weight.data *= self.sparsity_mask
-
-        return nn.functional.linear(input, self.weight, self.bias)
+        # Masked weights take no part in the product and receive zero gradient; the
+        # parameter itself is never modified in place during forward.
+        return nn.functional.linear(input, self.weight * self.sparsity_mask, self.bias)
 
     def get_sparsity_info(self) -> dict:
         """

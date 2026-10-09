@@ -381,3 +381,30 @@ def train_val_test_split(
     val = normalizer.transform(data[i_train:i_val])
     test = normalizer.transform(data[i_val:])
     return train, val, test, normalizer
+
+
+def forecast_windows(
+    series: torch.Tensor,
+    context: int,
+    horizon: int,
+    n_windows: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Evenly spaced (calibration, target) pairs from one split, for validation or testing.
+
+    Returns ``(calibration, target)`` of shapes ``(n_windows, context, n_obs)`` and
+    ``(n_windows, horizon, n_obs)``; ``target[i]`` directly follows ``calibration[i]``.
+    Both can be passed straight to ``train_and_validate`` / a model forward. Chaotic
+    forecast errors vary a lot with the starting point, so judging a model on one
+    window is unreliable.
+    """
+    span = context + horizon
+    last_start = len(series) - span
+    if last_start < 0:
+        raise ValueError(f"series of length {len(series)} is shorter than context + horizon = {span}")
+    if n_windows < 1:
+        raise ValueError("n_windows must be >= 1")
+    starts = torch.linspace(0, last_start, n_windows).round().long().tolist()
+    cal = torch.stack([series[s:s + context] for s in starts])
+    target = torch.stack([series[s + context:s + span] for s in starts])
+    return cal, target
