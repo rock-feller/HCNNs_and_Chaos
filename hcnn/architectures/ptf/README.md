@@ -13,8 +13,8 @@ moving the model gradually from fully teacher-forced to closer-to-autonomous beh
 ## Recurrence
 
 ```
-δ̃_t     = dropout_p(epoch)(δ_t)        (returned as `partial_delta_terms`)
-r_t     = s_t − Cᵀ δ̃_t
+m_t     ~ Bernoulli(1 − p(epoch))      (no 1/(1−p) rescaling)
+r_t     = s_t − Cᵀ (m_t ⊙ (ŷ_t − y_t))   (kept coords := y_t, dropped coords keep ŷ_t)
 s_{t+1} = A tanh(r_t) [+ B u_t]
 ```
 

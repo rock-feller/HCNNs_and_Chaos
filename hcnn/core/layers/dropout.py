@@ -13,60 +13,38 @@ import torch.nn as nn
 
 class PartialTeacherForcingDropout(nn.Dropout):
     r"""
-    Implements dropout with scaling to enable partial teacher forcing.
+    Bernoulli mask on the teacher-forcing correction (partial teacher forcing).
 
-    This layer applies dropout to the delta term (:math:`\hat{y} - y_{true}`) during state transitions
-    to simulate partial teacher forcing, allowing for a controlled level of noise or guidance.
-
-    Mathematical Formulation:
-    -------------------------
-    For input tensor :math:`\mathbf{x}` (typically the delta term: :math:`\hat{y} - y_{true}`):
-
-    During training:
+    Applied to the correction term :math:`\delta_t = y_t - \hat{y}_t` before it enters the state,
+    so that each observed coordinate is either fully teacher-forced or left to the model:
 
     .. math::
-        \mathbf{y} = \frac{\mathbf{x} \odot \mathbf{m}}{1 - p}
+        r_t = s_t + C^\top (\mathbf{m}_t \odot \delta_t), \qquad
+        m_{t,i} \sim \text{Bernoulli}(1 - p)
 
-    where :math:`\mathbf{m} \sim \text{Bernoulli}(1 - p)`, i.e., each element is:
+    - :math:`m_{t,i} = 1`: the observed coordinate of :math:`r_t` is replaced by the data :math:`y_{t,i}`;
+    - :math:`m_{t,i} = 0`: it keeps the model's own prediction :math:`\hat{y}_{t,i}`.
 
-    .. math::
-        m_i = \begin{cases}
-        1, & \text{with probability } (1 - p) \\
-        0, & \text{with probability } p
-        \end{cases}
+    **There is deliberately no** :math:`1/(1-p)` **rescaling** (unlike ``nn.Dropout``). Rescaling would
+    turn a kept correction into :math:`r_{t,i} = y_{t,i} + \tfrac{p}{1-p}(y_{t,i} - \hat{y}_{t,i})`,
+    i.e. it would overshoot *past* the data instead of replacing the prediction with it. (The
+    original 2024 implementation cancelled the rescaling with a ``(1 - p)`` factor for this reason.)
 
-    During evaluation:
-
-    .. math::
-        \mathbf{y} = \mathbf{x} \quad \text{(no dropout applied)}
-
-    The scaling factor :math:`\frac{1}{1-p}` ensures that the expected value of the output
-    matches the input: :math:`\mathbb{E}[\mathbf{y}] = \mathbb{E}[\mathbf{x}]` during training.
-
-    The key difference from standard dropout is that this is specifically designed for
-    the partial teacher forcing mechanism in HCNN models, where we want to randomly
-    mask parts of the correction term during training.
+    In ``eval()`` mode, or with ``p = 0``, the input is returned unchanged (full teacher forcing).
 
     Parameters
     ----------
     p : float, default=0.0
-        Dropout probability. The fraction of elements to drop
+        Probability of dropping (not teacher-forcing) each correction entry.
     inplace : bool, default=False
-        Whether to perform the operation in-place
-
-    Attributes
-    ----------
-    p : float
-        Dropout probability. The fraction of elements to drop
-    inplace : bool
-        Whether to perform the operation in-place
+        Kept for API compatibility; the mask is never applied in place (the correction is
+        part of the autograd graph).
 
     Examples
     --------
     >>> dropout = PartialTeacherForcingDropout(p=0.3)
     >>> delta_term = torch.randn(32, 3)  # batch_size=32, n_obs_vars=3
-    >>> partial_delta = dropout(delta_term)
-    >>> # During training, ~30% of elements will be zeroed out
+    >>> partial_delta = dropout(delta_term)  # ~30% of entries zeroed, the rest unchanged
     """
 
     def __init__(self, p: float = 0.0, inplace: bool = False):
@@ -93,24 +71,13 @@ class PartialTeacherForcingDropout(nn.Dropout):
         self.inplace = inplace
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        """
-        Apply partial teacher forcing dropout to input tensor.
-
-        During training, randomly sets elements to zero with probability `p`
-        and scales the remaining elements by `1/(1-p)` to maintain expected value.
-        During evaluation, returns input unchanged.
-
-        Parameters
-        ----------
-        input : torch.Tensor
-            Input tensor (typically the delta term: y_true - y_pred)
-
-        Returns
-        -------
-        torch.Tensor
-            Tensor with dropout applied during training, unchanged during evaluation
-        """
-        return super().forward(input)
+        """Zero each entry with probability ``p`` (training only); never rescale the rest."""
+        if not self.training or self.p == 0.0:
+            return input
+        if self.p >= 1.0:
+            return torch.zeros_like(input)
+        mask = torch.empty_like(input).bernoulli_(1.0 - self.p)
+        return input * mask
 
     def extra_repr(self) -> str:
         """Return extra representation string for the layer."""

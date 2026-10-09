@@ -30,6 +30,17 @@ def test_no_dropout_in_eval_mode():
     assert torch.allclose(co.extras["partial_delta_terms"], co.delta_term)
 
 
+def test_kept_corrections_are_not_rescaled():
+    """Partial TF keeps or drops each correction; kept ones must equal delta (no 1/(1-p))."""
+    cell = PTFHCNNCell(n_obs_vars=N_OBS, n_hid_vars=N_HID, dropout_strategy="constant",
+                       dropout_params={"p": 0.5}).train()
+    co = cell(torch.randn(256, N_STATE), teacher_forcing=True, observation=torch.randn(256, N_OBS))
+    partial, full = co.extras["partial_delta_terms"], co.delta_term
+    kept = partial != 0
+    assert 0.3 < kept.float().mean() < 0.7
+    assert torch.equal(partial[kept], full[kept])
+
+
 def test_dropout_schedule_advances_during_training():
     t = torch.linspace(0, 12, 120)
     series = 0.5 * torch.stack([torch.sin(t), torch.cos(t)], dim=1)
