@@ -105,6 +105,15 @@ def test_teacher_forcing_replaces_observed_coordinates(spec):
     assert torch.allclose(na, nb, atol=1e-6)
 
 
+def test_forecast_starts_after_the_window(spec):
+    """forecasts[:, 0] predicts the step AFTER the window, not the last observed step."""
+    m = _model(spec).eval()
+    with torch.no_grad():
+        out = m(torch.randn(1, 10, N_OBS), forecast_horizon=2)
+    assert not torch.allclose(out.forecasts[:, 0], out.expectations[:, -1])
+    assert torch.allclose(out.forecasts, out.future_states[..., :N_OBS], atol=1e-6)
+
+
 def test_teacher_forcing_uses_the_observation(spec):
     cell = spec.cell_cls(n_obs_vars=N_OBS, n_hid_vars=N_HID).eval()  # eval: no PTF dropout
     state = torch.randn(4, N_STATE)
@@ -162,10 +171,6 @@ def test_gradients_flow(spec):
     assert any(g.abs().sum() > 0 for g in grads)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known rollout bug in BaseHCNNModel.forward: the forecast restarts from the "
-    "uncorrected state s_{T-1}, so forecasts[0] repeats expectations[-1] and the last "
-    "observation never influences the forecast (one-step shift vs. the targets)."))
 def test_forecast_uses_the_last_observation(spec):
     m = _model(spec).eval()
     data = torch.randn(1, 10, N_OBS)
