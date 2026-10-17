@@ -12,6 +12,8 @@ from collections import namedtuple
 import torch
 import torch.nn as nn
 
+from .initial_state import InitialState, SharedInitialState
+
 
 # Named tuples for model outputs
 HCNNOutput = namedtuple(
@@ -160,19 +162,45 @@ class BaseHCNNModel(nn.Module, ABC):
         self._init_state()
         
     def _init_state(self):
-        """Initialize the initial state s0."""
-        if self.s0_nature == 'zeros_':
-            s0 = torch.zeros(self.n_state_vars)
-        elif self.s0_nature == 'random_':
-            s0 = torch.empty(self.n_state_vars).uniform_(*self.init_range)
-        else:
-            raise ValueError(f"Unknown s0_nature: {self.s0_nature}")
-            
-        if self.train_s0:
-            self.s0 = nn.Parameter(s0)
-        else:
-            self.register_buffer('s0', s0)
-    
+        """Build the default initial-state module: one shared ``s0`` (see ``set_initial_state``)."""
+        self.initial_state = SharedInitialState(
+            self.n_obs_vars, self.n_hid_vars,
+            s0_nature=self.s0_nature, train_s0=self.train_s0, init_range=self.init_range,
+        )
+
+    def set_initial_state(self, initial_state: InitialState) -> "BaseHCNNModel":
+        """
+        Replace how the first state of each window is built, e.g. with a
+        ``SharedInitialState(..., noise_std=0.1)`` or a ``DelayEmbeddingInitialState``.
+        Returns the model, so calls can be chained.
+        """
+        if not isinstance(initial_state, InitialState):
+            raise TypeError(f"Expected an InitialState, got {type(initial_state).__name__}")
+        if (initial_state.n_obs_vars, initial_state.n_hid_vars) != (self.n_obs_vars, self.n_hid_vars):
+            raise ValueError(
+                f"Initial state is sized for ({initial_state.n_obs_vars}, {initial_state.n_hid_vars}) "
+                f"observed/hidden variables; the model has ({self.n_obs_vars}, {self.n_hid_vars})."
+            )
+        self.initial_state = initial_state
+        return self
+
+    @property
+    def s0(self) -> torch.Tensor:
+        """The shared initial state, when the initial-state module has one."""
+        return self.initial_state.s0
+
+    @property
+    def n_warmup(self) -> int:
+        """Leading observations of each window used to build the initial state (not predicted)."""
+        return self.initial_state.n_warmup
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # Checkpoints saved before the initial-state module stored s0 as `<prefix>s0`.
+        old, new = prefix + "s0", prefix + "initial_state.s0"
+        if old in state_dict and new not in state_dict:
+            state_dict[new] = state_dict.pop(old)
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
     def forward(
         self,
         data_window: torch.Tensor,
@@ -188,8 +216,13 @@ class BaseHCNNModel(nn.Module, ABC):
         :class:`CellOutput`); this method only orchestrates the two-phase rollout
         that is identical across Vanilla / PTF / LForm / LSpa:
 
+        0. **Initial state**: ``self.initial_state(data_window)`` gives one state per
+           window (default: a shared ``s0``; see :mod:`hcnn.core.initial_state`). A module
+           that infers the state from the first ``n_warmup`` observations starts the
+           calibration at ``t = n_warmup``; those observations are not predicted.
         1. **Calibration** over the observed ``data_window`` with teacher forcing
            (the cell sees the ground-truth observation at each step).
+           ``expectations[:, i]`` predicts ``data_window[:, n_warmup + i]``.
         2. **Forecast** (optional) for ``forecast_horizon`` steps in autonomous
            mode (``teacher_forcing=False``), starting from ``s_T`` (the state after the
            last teacher-forced step) - the model is fed only its own state, so there is
@@ -219,17 +252,23 @@ class BaseHCNNModel(nn.Module, ABC):
         Union[HCNNOutput, PTFHCNNOutput]
             The variant's output named tuple (see :meth:`_pack_output`).
         """
-        batch_size, seq_len, _ = data_window.shape
-        device = data_window.device
+        seq_len = data_window.shape[1]
+        n_warmup = self.initial_state.n_warmup
+        if seq_len <= n_warmup:
+            raise ValueError(
+                f"data_window has {seq_len} time steps; the initial state uses the first "
+                f"{n_warmup}, so at least {n_warmup + 1} are needed."
+            )
 
-        current_state = self.s0.to(device).expand(batch_size, -1).clone()
+        # One initial state per window, built from at most data_window[:, :n_warmup].
+        current_state = self.initial_state(data_window)
         states_list = [current_state]
         expectations_list = []
         delta_terms_list = []
         extras_lists: Dict[str, list] = {}
 
         # --- Calibration: teacher forcing over the observed window ---
-        for t in range(seq_len):
+        for t in range(n_warmup, seq_len):
             ext_t = externals[:, t, :] if externals is not None else None
             co = self.cell(
                 state=current_state,

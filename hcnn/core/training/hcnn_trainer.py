@@ -16,9 +16,11 @@ class HCNNTrainer(BaseTrainer):
     """Trainer for a single HCNN model (Vanilla / PTF / LForm / LSpa)."""
 
     def _batch_loss(self, batch: torch.Tensor) -> torch.Tensor:
-        # HCNN reconstructs the observed window under teacher forcing; expectations[:, t]
-        # = C s_t is the one-step-ahead prediction of batch[:, t].
-        return self.loss_fn(self.model(data_window=batch).expectations, batch)
+        # HCNN reconstructs the observed window under teacher forcing; expectations[:, i]
+        # = C s_t is the one-step-ahead prediction of batch[:, t], t = n_warmup + i (the
+        # first n_warmup observations, if any, only build the initial state).
+        n_warmup = getattr(self.model, "n_warmup", 0)
+        return self.loss_fn(self.model(data_window=batch).expectations, batch[:, n_warmup:])
 
     def _forecast(self, calibration_window: torch.Tensor, horizon: int) -> torch.Tensor:
         # Autonomous rollout: forecast `horizon` steps after one window (T, n_obs) or a

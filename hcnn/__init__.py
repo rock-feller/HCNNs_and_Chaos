@@ -78,6 +78,7 @@ from .architectures import (
 
 # Training
 from .core.training import HCNNTrainer, BaseTrainer, EnsembleTrainer
+from .core.initial_state import InitialState, SharedInitialState, DelayEmbeddingInitialState
 
 # Utility functions
 from .utils.device import get_device, set_device, get_device_info
@@ -128,6 +129,10 @@ __all__ = [
     "HCNNTrainer",
     "BaseTrainer",
     "EnsembleTrainer",
+    # initial state of the rollout
+    "InitialState",
+    "SharedInitialState",
+    "DelayEmbeddingInitialState",
     # config
     "Config",
     "load_config",

@@ -3,6 +3,8 @@ Shared HCNN framework - the part every architecture builds on.
 
 - :mod:`.base`       - ``BaseHCNNCell``, ``BaseHCNNModel`` (the one shared rollout),
                        ``CellOutput`` and the output named tuples
+- :mod:`.initial_state` - how each window's first state is built (``SharedInitialState``,
+                       ``DelayEmbeddingInitialState``)
 - :mod:`.registry`   - architecture registry (``build_model``, ``list_architectures``)
 - :mod:`.layers`     - reusable layers (``CustomLinear``, ``DiagonalMatrix``,
                        ``CustomSparseLinear``, PTF dropout schedules)
@@ -14,6 +16,7 @@ The architectures themselves live in :mod:`hcnn.architectures`. ``cells`` and
 """
 
 from . import base
+from . import initial_state
 from . import registry
 from . import layers
 from . import ensembles
@@ -22,6 +25,7 @@ from . import models
 
 __all__ = [
     "base",
+    "initial_state",
     "registry",
     "layers",
     "ensembles",
