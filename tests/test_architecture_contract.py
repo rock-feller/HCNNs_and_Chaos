@@ -10,6 +10,7 @@ Architecture-specific behaviour (e.g. "the cell implements *this* formula") is
 tested in ``tests/architectures/test_<name>.py``.
 """
 import importlib
+import inspect
 import math
 import tempfile
 
@@ -87,6 +88,19 @@ def test_cell_returns_celloutput_in_both_modes(spec):
     assert auto.delta_term is None
 
 
+def test_cell_uses_the_shared_hcnn_step(spec):
+    """y_hat = C s and the teacher-forcing correction live once, in BaseHCNNCell.forward."""
+    if spec.cell_cls.__dict__.get("_custom_forward", False):
+        pytest.skip("cell declares a custom forward")
+    assert spec.cell_cls.forward is BaseHCNNCell.forward
+
+
+def test_cell_defaults_to_its_model_init_range(spec):
+    """A cell built on its own initialises like the cell its model builds."""
+    model_default = inspect.signature(spec.model_cls).parameters["init_range"].default
+    assert spec.cell_cls(n_obs_vars=N_OBS, n_hid_vars=N_HID).init_range == model_default
+
+
 def test_teacher_forcing_replaces_observed_coordinates(spec):
     """r_t = s_t - C^T (y_pred - y_true): the observed part of r_t IS the data, so under
     teacher forcing the next state cannot depend on the model's own observed coordinates."""
@@ -141,6 +155,21 @@ def test_model_rollout_shapes(spec):
 def test_no_forecast_without_horizon(spec):
     out = _model(spec)(torch.randn(2, 5, N_OBS))
     assert out.forecasts is None and out.future_states is None
+
+
+def test_calibration_is_causal(spec):
+    """y_hat_t depends only on y_0 ... y_{t-1}: changing y_t leaves y_hat_0 ... y_hat_t
+    unchanged and moves y_hat_{t+1}."""
+    m = _model(spec).eval()  # eval: no PTF dropout
+    data = torch.randn(2, 10, N_OBS)
+    with torch.no_grad():
+        base = m(data).expectations
+        for t in (0, 4, 8):
+            changed = data.clone()
+            changed[:, t] += 1.0
+            out = m(changed).expectations
+            assert torch.allclose(out[:, :t + 1], base[:, :t + 1]), f"y_hat_<={t} saw y_{t}"
+            assert not torch.allclose(out[:, t + 1], base[:, t + 1]), f"y_{t} did not reach y_hat_{t + 1}"
 
 
 def test_expectations_are_C_times_states(spec):

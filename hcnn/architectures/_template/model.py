@@ -9,6 +9,7 @@ write a ``forward`` here. Only build the cell (and, if your cell returns
 from typing import Optional, Tuple, Literal
 
 from ...core.base import BaseHCNNModel
+from ...core.defaults import DEFAULT_INIT_RANGE
 from .cell import TemplateHCNNCell
 
 
@@ -21,7 +22,7 @@ class Template_Model(BaseHCNNModel):  # TODO: rename, e.g. MyIdea_Model
         n_hid_vars: int,
         s0_nature: Literal["zeros_", "random_"] = "random_",
         train_s0: bool = True,
-        init_range: Tuple[float, float] = (-0.5, 0.5),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         n_ext_vars: Optional[int] = None,
         # TODO: forward your cell's hyper-parameters (keep defaults).
     ):

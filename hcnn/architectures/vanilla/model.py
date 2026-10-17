@@ -10,6 +10,7 @@ import torch
 from typing import Optional, Tuple, Literal
 
 from ...core.base import BaseHCNNModel
+from ...core.defaults import DEFAULT_INIT_RANGE
 from .cell import VanillaHCNNCell
 
 
@@ -28,7 +29,7 @@ class Vanilla_Model(BaseHCNNModel):
         n_hid_vars: int,
         s0_nature: Literal['zeros_', 'random_'] = 'random_',
         train_s0: bool = True,
-        init_range: Tuple[float, float] = (-0.5, 0.5),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         n_ext_vars: Optional[int] = None,
     ):
         super().__init__(
