@@ -22,6 +22,8 @@ from typing import Literal, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from .defaults import DEFAULT_INIT_RANGE
+
 
 class InitialState(nn.Module, ABC):
     """
@@ -81,7 +83,7 @@ class SharedInitialState(InitialState):
         n_hid_vars: int,
         s0_nature: Literal['zeros_', 'random_'] = 'random_',
         train_s0: bool = True,
-        init_range: Tuple[float, float] = (-0.5, 0.5),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         noise_std: float = 0.0,
         observed_from_data: bool = False,
     ):
