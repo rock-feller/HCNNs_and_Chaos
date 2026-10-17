@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from typing import Optional, Tuple
 from ...core.base import BaseHCNNCell
+from ...core.defaults import DEFAULT_INIT_RANGE
 from ...core.layers import CustomLinear, DiagonalMatrix
 
 
@@ -38,7 +39,7 @@ class LFormHCNNCell(BaseHCNNCell):
         Number of observed variables (i.e., the output dimensionality of the system)
     n_hid_vars : int
         Number of hidden variables (i.e., the internal state dimensionality)
-    init_range : Tuple[float, float], default=(-0.75, 0.75)
+    init_range : Tuple[float, float], default=DEFAULT_INIT_RANGE
         Range for uniform initialization of the linear transformation weights
     init_diag : float, default=1.0
         Initial value for diagonal elements of the diagonal matrix D
@@ -63,7 +64,7 @@ class LFormHCNNCell(BaseHCNNCell):
         self,
         n_obs_vars: int,
         n_hid_vars: int,
-        init_range: Tuple[float, float] = (-0.75, 0.75),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         init_diag: float = 1.0,
         n_ext_vars: Optional[int] = None
     ):

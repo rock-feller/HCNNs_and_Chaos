@@ -10,6 +10,7 @@ import torch
 from typing import Optional, Tuple, Literal
 
 from ...core.base import BaseHCNNModel
+from ...core.defaults import DEFAULT_INIT_RANGE
 from .cell import LSpaHCNNCell
 
 
@@ -30,7 +31,7 @@ class LSpa_Model(BaseHCNNModel):
         bias: bool = False,
         s0_nature: Literal['zeros_', 'random_'] = 'random_',
         train_s0: bool = True,
-        init_range: Tuple[float, float] = (-0.75, 0.75),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         n_ext_vars: Optional[int] = None,
     ):
         super().__init__(

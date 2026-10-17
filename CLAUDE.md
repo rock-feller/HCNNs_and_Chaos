@@ -60,7 +60,7 @@ The teacher-forcing correction is `r_t = s_t − Cᵀ(ŷ_t − y_t) = s_t + Cᵀ
 - **Validate on several windows at ≈ 1 Lyapunov time** (`forecast_windows(val, context, horizon, n)` → pass both to `train_and_validate`). 300-step MSE rewards predicting the mean, and runs then select epoch 1.
 - **Helps:** `lr_schedule="cosine"` (+40 % at dt 0.05) and shuffled windows. **No gain or harmful:** grad clipping, lr 3e-3, spectral-radius-1 init, washout (removed), LayerNorm (rejected: breaks `y = C s`).
 - **Init scales with size:** keep the spectral radius when changing `n_hid_vars` (`init_range ≈ ±0.5·√(23/n_state)`); the fixed ±0.5 with 50 hidden units collapses.
-- **Ensemble init:** `*HCNNEnsemble` constructors default to `init_range=(-0.75, 0.75)`, but the Vanilla and PTF models default to `(-0.5, 0.5)` (LForm and LSpa models also use `(-0.75, 0.75)`, a confound when comparing architectures). With the wider range most members diverge, so pass `init_range` explicitly. Seed-only ensembles are under-dispersed.
+- **Ensemble init:** `*HCNNEnsemble` constructors default to `init_range=(-0.75, 0.75)`, but every model defaults to `DEFAULT_INIT_RANGE = (-0.5, 0.5)` (LForm and LSpa used `(-0.75, 0.75)` until they were aligned). With the wider range most members diverge, so pass `init_range` explicitly. Seed-only ensembles are under-dispersed.
 - **Known remaining issues:** LForm's `DiagonalMatrix` still has a hidden gradient hook (clip 0.5, NaN→0) and in-place clamping; LSpa's init is a normal with std `a/√n`, not the documented uniform. Both confound architecture comparisons.
 
 ## Commands

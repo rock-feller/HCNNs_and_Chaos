@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from typing import Optional, Tuple, Literal
 from ...core.base import BaseHCNNCell
+from ...core.defaults import DEFAULT_INIT_RANGE
 from ...core.layers.sparse import  CustomSparseLinear
 from ...core.layers.linear import CustomLinear
 
@@ -34,7 +35,7 @@ class LSpaHCNNCell(BaseHCNNCell):
         Number of observed variables (i.e., the dimensionality of the observed state variables)
     n_hid_vars : int
         Number of hidden variables (i.e., the dimensionality of the hidden state variables)
-    init_range : Tuple[float, float], default=(-0.75, 0.75)
+    init_range : Tuple[float, float], default=DEFAULT_INIT_RANGE
         Range for uniform initialization of weights
     bias : bool, default=False
         Whether to include bias terms in linear transformations
@@ -68,7 +69,7 @@ class LSpaHCNNCell(BaseHCNNCell):
         self,
         n_obs_vars: int,
         n_hid_vars: int,
-        init_range: Tuple[float, float] = (-0.75, 0.75),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         bias: bool = False,
         mask_type: Literal['non_obs_block', 'random_block'] = 'random_block',
         sparsity_ratio: float = 0.0,
