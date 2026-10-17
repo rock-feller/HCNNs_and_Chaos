@@ -45,6 +45,8 @@ class BaseTrainer:
         lr_schedule: Optional[Literal["cosine"]] = None,
         min_lr_ratio: float = 0.01,
         patience: Optional[int] = None,
+        decay_initial_state: bool = True,
+        per_epoch_average: Literal["batches", "samples"] = "batches",
     ):
         """
         Parameters (beyond the obvious)
@@ -59,10 +61,24 @@ class BaseTrainer:
         patience : int, optional
             ``train_and_validate`` stops after this many epochs without a new best
             validation loss (``None`` = always run ``num_epochs``).
+        decay_initial_state : bool
+            Whether ``weight_decay`` also applies to the learned initial state ``s0``.
+            ``True`` (default) decays every parameter. ``False`` puts ``s0`` in its own
+            parameter group with no decay, so the decay doesn't pull ``h0`` towards 0.
+            Has no effect when ``weight_decay == 0`` or ``s0`` is not trainable.
+        per_epoch_average : {"batches", "samples"}
+            How ``backprop_mode="per_epoch"`` averages the batch losses into the epoch loss
+            (and its gradient). ``"batches"`` (default) gives every batch the same weight,
+            so a smaller last batch counts more per window. ``"samples"`` weights each batch
+            by its number of windows: the exact mean over all training windows.
         """
+        if per_epoch_average not in ("batches", "samples"):
+            raise ValueError(f"Unknown per_epoch_average: {per_epoch_average}")
         self.model = model
         self.best_state_dict = None  # weights of the selected (best) epoch; see restore_best()
         self.backprop_mode = backprop_mode
+        self.decay_initial_state = decay_initial_state
+        self.per_epoch_average = per_epoch_average
         self.grad_clip = grad_clip
         self.save_dir = save_dir
         self.lr_schedule = lr_schedule
@@ -78,12 +94,13 @@ class BaseTrainer:
         else:
             raise ValueError(f"Unknown loss function: {loss_fn}")
 
+        params = self._param_groups(model, decay_initial_state)
         if optimizer_type == "adam":
-            self.optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+            self.optimizer = optim.Adam(params, lr=learning_rate, weight_decay=weight_decay)
         elif optimizer_type == "adamw":
-            self.optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+            self.optimizer = optim.AdamW(params, lr=learning_rate, weight_decay=weight_decay)
         elif optimizer_type == "sgd":
-            self.optimizer = optim.SGD(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+            self.optimizer = optim.SGD(params, lr=learning_rate, weight_decay=weight_decay)
         else:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
         if lr_schedule not in (None, "cosine"):
@@ -102,6 +119,20 @@ class BaseTrainer:
             self.model.update_dropout_epoch(epoch + 1)
 
     # ---- shared helpers ---------------------------------------------- #
+    @staticmethod
+    def _param_groups(model, decay_initial_state: bool):
+        """All parameters in one group, or (with ``decay_initial_state=False``) the
+        initial state ``s0`` split off into a second group with ``weight_decay=0``.
+        The decayed group stays first, so ``param_groups[0]`` keeps its meaning."""
+        if decay_initial_state:
+            return model.parameters()
+        named = list(model.named_parameters())
+        s0 = [p for name, p in named if name.split(".")[-1] == "s0"]
+        if not s0:
+            return model.parameters()
+        rest = [p for name, p in named if name.split(".")[-1] != "s0"]
+        return [{"params": rest}, {"params": s0, "weight_decay": 0.0}]
+
     @staticmethod
     def _logcosh_loss(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Stable log-cosh: |x| + softplus(-2|x|) - log 2 (no cosh overflow)."""
@@ -133,6 +164,26 @@ class BaseTrainer:
                 self._step(loss)
                 total_loss += loss.item()
                 batch_count += 1
+
+        elif self.backprop_mode == "per_epoch" and self.per_epoch_average == "samples":
+            # Same as below, but each batch is weighted by its number of windows: the
+            # gradients of loss * batch_size are summed, then divided by the total count.
+            self.optimizer.zero_grad()
+            n_samples = 0
+            for batch in data_loader:
+                batch = batch.to(device)
+                loss = self._batch_loss(batch)
+                (loss * batch.shape[0]).backward()
+                total_loss += loss.item() * batch.shape[0]
+                n_samples += batch.shape[0]
+            n_samples = max(n_samples, 1)
+            for p in self.model.parameters():
+                if p.grad is not None:
+                    p.grad.div_(n_samples)
+            if self.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+            self.optimizer.step()
+            return total_loss / n_samples
 
         elif self.backprop_mode == "per_epoch":
             # One optimizer step on the mean loss over all batches. Gradients are

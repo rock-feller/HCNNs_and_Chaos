@@ -31,7 +31,8 @@ class CustomSparseLinear(nn.Linear):
     mask_type : Literal['non_obs_block', 'random_block'], default='random_block'
         Type of sparsity mask to apply:
         - 'random_block': Applies uniform random sparsity over the entire weight matrix
-        - 'non_obs_block': Applies sparsity only to the non-observable block of the matrix
+        - 'non_obs_block': Applies sparsity only to the columns that read the hidden
+          variables (the hid_to_obs and hid_to_hid blocks)
     sparsity_ratio : float, default=0.0
         Proportion of weights to set to zero. Must be in the range [0.0, 1.0)
     device : Optional[torch.device], default=None
@@ -155,16 +156,22 @@ class CustomSparseLinear(nn.Linear):
 
     def _create_non_obs_block_mask(self) -> torch.Tensor:
         """
-        Create sparsity mask only in non-observable blocks.
+        Create a sparsity mask on the hidden columns only.
 
-        The weight matrix is structured as:
-        [obs_to_obs,  obs_to_hid ]
-        [hid_to_obs,  hid_to_hid ]
+        The weight has shape ``(out, in)``: ``W[i, j]`` maps input ``j`` to output ``i``,
+        so rows are outputs and columns are inputs. With the state ordered observed
+        first, hidden second, the blocks are:
 
-        Sparsity is applied to the obs_to_hid and hid_to_hid blocks (i.e. all
-        columns that map *into* hidden variables); obs_to_obs and hid_to_obs
-        remain dense. Built with vectorized tensor ops (no Python loops), so it
-        scales to the large state spaces LSpa targets.
+        ::
+
+                          in: observed   in: hidden
+            out: observed [ obs_to_obs  |  hid_to_obs ]
+            out: hidden   [ obs_to_hid  |  hid_to_hid ]
+
+        Sparsity is applied to the hid_to_obs and hid_to_hid blocks, i.e. the columns
+        that read the hidden variables; obs_to_obs and obs_to_hid remain dense. Built
+        with vectorized tensor ops (no Python loops), so it scales to the large state
+        spaces LSpa targets.
         """
         dev, dt = self.weight.device, self.weight.dtype
         n, n_obs = self.n_state_vars, self.n_obs_vars
@@ -174,7 +181,7 @@ class CustomSparseLinear(nn.Linear):
 
         if self.n_hid_vars > 0 and self.sparsity_ratio > 0.0:
             # Sparsifiable positions = all rows, hidden columns [n_obs:n]
-            # (obs_to_hid + hid_to_hid). Flatten their linear indices.
+            # (hid_to_obs + hid_to_hid). Flatten their linear indices.
             rows = torch.arange(n, device=dev).repeat_interleave(self.n_hid_vars)
             cols = torch.arange(n_obs, n, device=dev).repeat(n)
             flat_idx = rows * n + cols  # (n * n_hid_vars,)

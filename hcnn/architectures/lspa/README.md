@@ -17,8 +17,9 @@ s_{t+1} = (M ⊙ A) tanh(r_t) [+ B u_t]       M ∈ {0,1}^{n_state × n_state} f
 
 Mask types (`hcnn/core/layers/sparse.py`):
 - `random_block`: uniform random sparsity over the whole matrix;
-- `non_obs_block`: only the columns of the hidden variables (the obs→hid and hid→hid blocks) are
-  sparsified; the obs→obs and hid→obs blocks stay dense.
+- `non_obs_block`: only the columns of the hidden variables, i.e. the weights that **read** the
+  hidden state (the hid→obs and hid→hid blocks), are sparsified; the obs→obs and obs→hid blocks
+  stay dense. `A` is stored as `(out, in)`, so a column is an input and a row is an output.
 
 > The mask is currently applied to a **dense** matrix, which is correct but not efficient. True sparse
 > kernels are an open research direction for this architecture.

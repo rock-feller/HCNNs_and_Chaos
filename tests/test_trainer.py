@@ -101,3 +101,55 @@ def test_per_epoch_mode_matches_full_batch_gradient():
     (sum(losses) / len(losses)).backward()
     for pa, pb in zip(a.parameters(), b.parameters()):
         assert torch.allclose(pa.grad, pb.grad, atol=1e-6)
+
+
+def test_decay_initial_state_false_puts_s0_in_an_undecayed_group():
+    m = Vanilla_Model(n_obs_vars=3, n_hid_vars=6)
+    default = HCNNTrainer(m, weight_decay=0.1, save_dir=tempfile.mkdtemp())
+    assert len(default.optimizer.param_groups) == 1                 # default: unchanged
+    tr = HCNNTrainer(m, weight_decay=0.1, decay_initial_state=False, save_dir=tempfile.mkdtemp())
+    decayed, undecayed = tr.optimizer.param_groups
+    assert decayed["weight_decay"] == 0.1 and undecayed["weight_decay"] == 0.0
+    assert undecayed["params"] == [m.s0]
+    assert not any(p is m.s0 for p in decayed["params"])
+    assert len(decayed["params"]) + 1 == len(list(m.parameters()))
+
+
+def test_decay_initial_state_false_leaves_s0_unshrunk():
+    """With a zero learning signal for s0, SGD weight decay is the only force on it."""
+    torch.manual_seed(0)
+    m = Vanilla_Model(n_obs_vars=3, n_hid_vars=6)
+    tr = HCNNTrainer(m, optimizer_type="sgd", learning_rate=0.1, weight_decay=0.5,
+                     decay_initial_state=False, save_dir=tempfile.mkdtemp())
+    s0 = m.s0.detach().clone()
+    tr.optimizer.zero_grad()
+    m.s0.grad = torch.zeros_like(m.s0)
+    tr.optimizer.step()
+    assert torch.equal(m.s0.detach(), s0)
+
+
+def test_per_epoch_sample_average_matches_mean_over_all_windows():
+    """'samples' weights each batch by its size: the exact mean over every window, even
+    when the last batch is smaller (1401 windows, batch size 16)."""
+    loader, _, _ = _data()
+    assert len(loader.dataset) % loader.batch_size != 0
+    torch.manual_seed(0)
+    a = Vanilla_Model(n_obs_vars=3, n_hid_vars=6)
+    b = Vanilla_Model(n_obs_vars=3, n_hid_vars=6)
+    b.load_state_dict(a.state_dict())
+    ta = HCNNTrainer(a, backprop_mode="per_epoch", per_epoch_average="samples",
+                     learning_rate=0.0, save_dir=tempfile.mkdtemp())
+    reported = ta._run_train_epoch(loader, 0)
+    windows = torch.stack([loader.dataset[i] for i in range(len(loader.dataset))])
+    loss = ta.loss_fn(b(data_window=windows).expectations, windows)
+    loss.backward()
+    assert math.isclose(reported, loss.item(), rel_tol=1e-5)
+    for pa, pb in zip(a.parameters(), b.parameters()):
+        assert torch.allclose(pa.grad, pb.grad, atol=1e-6)
+
+
+def test_per_epoch_average_rejects_unknown_value():
+    import pytest
+    with pytest.raises(ValueError):
+        HCNNTrainer(Vanilla_Model(n_obs_vars=3, n_hid_vars=6), per_epoch_average="windows",
+                    save_dir=tempfile.mkdtemp())

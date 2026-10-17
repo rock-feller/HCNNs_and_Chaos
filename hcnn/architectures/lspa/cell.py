@@ -41,7 +41,8 @@ class LSpaHCNNCell(BaseHCNNCell):
     mask_type : Literal['non_obs_block', 'random_block'], default='random_block'
         Type of sparsity mask to apply:
         - 'random_block': Applies uniform random sparsity over the entire weight matrix
-        - 'non_obs_block': Applies sparsity only to the non-observable block of the matrix
+        - 'non_obs_block': Applies sparsity only to the columns that read the hidden
+          variables (the hid_to_obs and hid_to_hid blocks)
     sparsity_ratio : float, default=0.0
         Proportion of weights to set to zero. Must be in the range [0.0, 1.0]
     n_ext_vars : Optional[int], default=None
