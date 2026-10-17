@@ -24,7 +24,7 @@ diagonal is clamped to `[ε, 1 − ε]`.
 | Argument | Default | Meaning |
 |---|---|---|
 | `init_diag` | `1.0` | initial value of the diagonal of `D` |
-| `init_range` | `(-0.75, 0.75)` | uniform init range for `A` (and `B`) |
+| `init_range` | `(-0.5, 0.5)` | uniform init range for `A` (and `B`); `DEFAULT_INIT_RANGE`, as for every model |
 | `n_obs_vars`, `n_hid_vars`, `s0_nature`, `train_s0`, `n_ext_vars` | | as for Vanilla |
 
 Inspect the gate with `model.get_diagonal_values()`.
