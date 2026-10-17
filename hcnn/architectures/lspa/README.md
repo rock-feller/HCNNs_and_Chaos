@@ -31,7 +31,7 @@ Mask types (`hcnn/core/layers/sparse.py`):
 | `sparsity_ratio` | `0.5` | fraction of zeroed weights, in `[0, 1)` |
 | `mask_type` | `"random_block"` | `random_block` or `non_obs_block` |
 | `bias` | `False` | bias in the sparse transition |
-| `init_range` | `(-0.75, 0.75)` | uniform init range |
+| `init_range` | `(-0.5, 0.5)` | init scale (`DEFAULT_INIT_RANGE`, as for every model); LSpa draws a normal scaled by it and clipped to it, not a uniform |
 | `n_obs_vars`, `n_hid_vars`, `s0_nature`, `train_s0`, `n_ext_vars` | | as for Vanilla |
 
 Inspect with `model.get_sparsity_info()` and `model.visualize_sparsity_pattern()`.
