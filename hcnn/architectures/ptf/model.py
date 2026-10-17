@@ -10,6 +10,7 @@ import torch
 from typing import Optional, Tuple, Literal
 
 from ...core.base import BaseHCNNModel, PTFHCNNOutput
+from ...core.defaults import DEFAULT_INIT_RANGE
 from .cell import PTFHCNNCell
 
 
@@ -32,7 +33,7 @@ class PTF_Model(BaseHCNNModel):
         drop_output: bool = False,
         s0_nature: Literal['zeros_', 'random_'] = 'random_',
         train_s0: bool = True,
-        init_range: Tuple[float, float] = (-0.5, 0.5),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         n_ext_vars: Optional[int] = None,
         dropout_strategy: str = 'adaptive',
         dropout_params: Optional[dict] = None,
