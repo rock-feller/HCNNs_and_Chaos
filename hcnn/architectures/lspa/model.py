@@ -18,7 +18,7 @@ class LSpa_Model(BaseHCNNModel):
     Large-Sparse HCNN: vanilla dynamics with a structured-sparse transition matrix
     ``A_sparse`` for scaling to high-dimensional state spaces. Two mask types are
     supported: ``random_block`` (uniform random) and ``non_obs_block`` (sparsify
-    only the hidden-related blocks).
+    only the columns that read the hidden variables: hid→obs and hid→hid).
     """
 
     def __init__(
