@@ -7,12 +7,15 @@ across the framework.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple, Union, Literal
+from types import MappingProxyType
+from typing import Dict, Mapping, NamedTuple, Optional, Tuple, Union, Literal
 from collections import namedtuple
 import torch
 import torch.nn as nn
 
+from .defaults import DEFAULT_INIT_RANGE
 from .initial_state import InitialState, SharedInitialState
+from .layers import CustomLinear
 
 
 # Named tuples for model outputs
@@ -31,41 +34,81 @@ ClassicOutput = namedtuple(
     ["outputs", "hidden_states", "forecasts"]
 )
 
-# Unified per-step output returned by every HCNN cell. Keeping a single, common
-# signature across all variants lets the rollout loop live once in BaseHCNNModel.
-#   - expectation : predicted observation y_hat_t = C s_t          (batch, n_obs)
-#   - next_state  : s_{t+1}                                        (batch, n_state)
-#   - delta_term  : teacher-forcing error y_t - y_hat_t (or None)  (batch, n_obs)
-#   - extras      : dict of variant-specific tensors (e.g. PTF's
-#                   partial_delta_terms); {} for variants with none.
-CellOutput = namedtuple("CellOutput", ["expectation", "next_state", "delta_term", "extras"])
-CellOutput.__new__.__defaults__ = ({},)  # extras optional, defaults to empty dict
+class CellOutput(NamedTuple):
+    """
+    Per-step output of every HCNN cell. One signature for all variants lets the rollout
+    live once, in :class:`BaseHCNNModel`.
+
+    - ``expectation``: the prediction ``y_hat_t = C s_t``, shape ``(batch, n_obs)``;
+    - ``next_state``: ``s_{t+1}``, shape ``(batch, n_state)``;
+    - ``delta_term``: the teacher-forcing error ``y_t - y_hat_t``, or ``None`` in the
+      autonomous mode, shape ``(batch, n_obs)``;
+    - ``extras``: variant-specific tensors (e.g. PTF's ``partial_delta_terms``). The
+      default is a read-only empty mapping, so it can never be shared and mutated.
+    """
+    expectation: torch.Tensor
+    next_state: torch.Tensor
+    delta_term: Optional[torch.Tensor]
+    extras: Mapping[str, torch.Tensor] = MappingProxyType({})
 
 
 class BaseHCNNCell(nn.Module, ABC):
-    """
-    Abstract base class for all HCNN cell implementations.
-    
-    This class defines the interface that all HCNN cells must implement,
-    ensuring consistency across different variants (Vanilla, PTF, LForm, LSpa).
-    
+    r"""
+    Base class of every HCNN cell. It implements the HCNN step **once**; a subclass only
+    says what is specific to its architecture.
+
+    With ``C = [I | 0]`` (the first ``n_obs_vars`` coordinates), one step is:
+
+    .. code-block:: text
+
+        y_hat_t = C s_t                          expectation (read before any correction)
+        delta_t = y_t - y_hat_t                  teacher forcing only
+        r_t     = s_t + C^T g(delta_t)           teacher forcing; r_t = s_t otherwise
+        s_{t+1} = f(r_t) [+ B u_t]
+
+    With the default ``g`` (identity) the observed part of ``r_t`` is the data ``y_t``.
+
+    A subclass implements:
+
+    - ``transition(r)``: ``f``, e.g. ``A tanh(r)`` (required);
+    - ``correction(delta)``: ``g``, e.g. PTF's dropout mask (optional; default identity);
+    - ``step_extras(delta, correction)``: extra per-step tensors (optional; default none);
+    - ``cell_type``.
+
+    It creates its own parameters, then calls :meth:`_init_external_matrix` to create
+    ``B``, in that order, so the random draws keep their order. It must not override
+    ``forward``: the sign of the correction and ``y_hat = C s`` then exist in one place.
+    A cell that genuinely needs its own step sets ``_custom_forward = True`` in its body
+    and is responsible for the contract (``tests/test_architecture_contract.py``).
+
     Parameters
     ----------
     n_obs_vars : int
-        Number of observed variables ( or observables) in the system
-    n_hid_vars : int  
-        Number of hidden variables (or unobservables) in the state
+        Number of observed variables.
+    n_hid_vars : int
+        Number of hidden variables.
     init_range : Tuple[float, float]
-        Range for weight initialization
+        Range of the uniform weight initialisation (default ``DEFAULT_INIT_RANGE``).
     n_ext_vars : Optional[int]
-        Number of external variables (if any).
+        Number of external input variables (``None``: no external inputs).
     """
-    
+
+    _custom_forward: bool = False
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if "forward" in cls.__dict__ and not cls.__dict__.get("_custom_forward", False):
+            raise TypeError(
+                f"{cls.__name__} overrides forward(). Implement transition() (and optionally "
+                f"correction() / step_extras()) instead; the HCNN step lives in BaseHCNNCell. "
+                f"Set _custom_forward = True in the class body only if the step must differ."
+            )
+
     def __init__(
         self,
         n_obs_vars: int,
-        n_hid_vars: int, 
-        init_range: Tuple[float, float] = (-0.75, 0.75),
+        n_hid_vars: int,
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         n_ext_vars: Optional[int] = None
     ):
         super().__init__()
@@ -74,44 +117,116 @@ class BaseHCNNCell(nn.Module, ABC):
         self.n_state_vars = n_obs_vars + n_hid_vars
         self.init_range = init_range
         self.n_ext_vars = n_ext_vars
-        
+        self.B: Optional[nn.Module] = None
+        # C = [I | 0]: reads the observed coordinates out of the state.
+        self.register_buffer("ConMat", torch.eye(n_obs_vars, self.n_state_vars), persistent=False)
+
+    def _init_external_matrix(self) -> None:
+        """Create ``B`` (``n_ext_vars -> n_state``) if the cell has external inputs.
+        Call it after creating the transition parameters, so the random draws keep their order."""
+        if self.n_ext_vars is not None:
+            self.B = CustomLinear(
+                in_features=self.n_ext_vars,
+                out_features=self.n_state_vars,
+                bias=False,
+                init_range=self.init_range,
+            )
+
+    # ---- what a subclass provides ------------------------------------ #
     @abstractmethod
+    def transition(self, r: torch.Tensor) -> torch.Tensor:
+        """``f(r_t)``: the next state before external inputs, shape ``(batch, n_state)``."""
+
+    def correction(self, delta: torch.Tensor) -> torch.Tensor:
+        """``g(delta_t)``: the part of the error fed back into the observed coordinates."""
+        return delta
+
+    def step_extras(self, delta: torch.Tensor, correction: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Extra per-step tensors returned in ``CellOutput.extras`` (teacher forcing only)."""
+        return {}
+
+    @property
+    @abstractmethod
+    def cell_type(self) -> str:
+        """Return the type of HCNN cell."""
+
+    # ---- the HCNN step (shared; do not override) --------------------- #
     def forward(
         self,
         state: torch.Tensor,
         teacher_forcing: bool = False,
         observation: Optional[torch.Tensor] = None,
         externals: Optional[torch.Tensor] = None,
-        **kwargs
-    ) -> Tuple[torch.Tensor, ...]:
+    ) -> CellOutput:
         """
-        Forward pass through the HCNN cell.
-        
+        One HCNN step.
+
         Parameters
         ----------
         state : torch.Tensor
-            Current state tensor
+            ``s_t``, shape ``(batch, n_state)``.
         teacher_forcing : bool
-            Whether to use teacher forcing
+            Correct the observed coordinates with ``observation`` (calibration) or not
+            (autonomous forecast; ``observation`` is then ignored).
         observation : Optional[torch.Tensor]
-            Ground truth observation for teacher forcing
+            ``y_t``, shape ``(batch, n_obs)``; required with ``teacher_forcing=True``.
         externals : Optional[torch.Tensor]
-            External variables
-        **kwargs
-            Additional cell-specific parameters
-            
-        Returns
-        -------
-        Tuple[torch.Tensor, ...]
-            Cell-specific output tuple
+            ``u_t``, shape ``(batch, n_ext)``; required if and only if the cell has ``B``.
         """
-        pass
-        
-    @property
-    @abstractmethod
-    def cell_type(self) -> str:
-        """Return the type of HCNN cell."""
-        pass
+        expectation = state @ self.ConMat.T                       # y_hat_t = C s_t
+
+        if teacher_forcing:
+            if observation is None:
+                raise ValueError("`observation` must be provided when `teacher_forcing` is True.")
+            if observation.shape[-1] != self.n_obs_vars:
+                raise ValueError(
+                    f"Expected {self.n_obs_vars} observation variables, got {observation.shape[-1]}"
+                )
+            delta_term = observation - expectation                 # delta_t = y_t - y_hat_t
+            correction = self.correction(delta_term)
+            r = state + correction @ self.ConMat                    # r_t = s_t + C^T g(delta_t)
+            extras = self.step_extras(delta_term, correction)
+        else:
+            delta_term, r, extras = None, state, {}
+
+        next_state = self.transition(r)
+        if self.n_ext_vars is not None:
+            if self.B is None:
+                raise RuntimeError(
+                    f"{type(self).__name__} has n_ext_vars={self.n_ext_vars} but no B; "
+                    "call self._init_external_matrix() in __init__."
+                )
+            if externals is None:
+                raise ValueError(
+                    "External variables expected but not provided. "
+                    f"Cell was initialized with n_ext_vars={self.n_ext_vars}"
+                )
+            if externals.shape[-1] != self.n_ext_vars:
+                raise ValueError(
+                    f"Expected {self.n_ext_vars} external variables, got {externals.shape[-1]}"
+                )
+            next_state = next_state + self.B(externals)
+        elif externals is not None:
+            raise ValueError(
+                "External variables provided but cell doesn't support them. "
+                "Initialize cell with n_ext_vars parameter."
+            )
+        return CellOutput(expectation, next_state, delta_term, extras)
+
+    # ---- accessors shared by every cell ------------------------------ #
+    def get_observation_matrix(self) -> torch.Tensor:
+        """``C = [I | 0]``, shape ``(n_obs, n_state)``."""
+        return self.ConMat
+
+    def get_external_input_matrix(self) -> Optional[torch.Tensor]:
+        """The weights of ``B``, or ``None`` without external inputs."""
+        return self.B.weight if self.B is not None else None
+
+    def extra_repr(self) -> str:
+        return (
+            f"n_obs_vars={self.n_obs_vars}, n_hid_vars={self.n_hid_vars}, "
+            f"n_ext_vars={self.n_ext_vars}, init_range={self.init_range}"
+        )
 
 
 class BaseHCNNModel(nn.Module, ABC):
@@ -143,7 +258,7 @@ class BaseHCNNModel(nn.Module, ABC):
         n_hid_vars: int,
         s0_nature: Literal['zeros_', 'random_'],
         train_s0: bool,
-        init_range: Tuple[float, float] = (-0.75, 0.75),
+        init_range: Tuple[float, float] = DEFAULT_INIT_RANGE,
         n_ext_vars: Optional[int] = None
     ):
         super().__init__()

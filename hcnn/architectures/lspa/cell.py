@@ -9,7 +9,7 @@ for efficient computation in high-dimensional dynamical systems.
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple, Literal
-from ...core.base import BaseHCNNCell, CellOutput
+from ...core.base import BaseHCNNCell
 from ...core.layers.sparse import  CustomSparseLinear
 from ...core.layers.linear import CustomLinear
 
@@ -56,8 +56,6 @@ class LSpaHCNNCell(BaseHCNNCell):
         External input matrix, only if n_ext_vars is provided
     ConMat : torch.Tensor
         Observation matrix that maps hidden states to observed outputs
-    Ide : torch.Tensor
-        Identity matrix for state operations
     bias : bool
         Whether bias terms are included
     mask_type : str
@@ -92,131 +90,17 @@ class LSpaHCNNCell(BaseHCNNCell):
             mask_type=self.mask_type
         )
 
-        # External input matrix B (optional)
-        if n_ext_vars is not None:
-            self.B = CustomLinear(
-                in_features=n_ext_vars,
-                out_features=self.n_state_vars,
-                bias=False,
-                init_range=self.init_range
-            )
-        else:
-            self.B = None
-
-        # Observation matrix (maps state to observations)
-        self.register_buffer(
-            'ConMat',
-            torch.eye(self.n_obs_vars, self.n_state_vars),
-            persistent=False
-        )
-
-        # Identity matrix for state operations
-        self.register_buffer(
-            'Ide',
-            torch.eye(self.n_state_vars),
-            persistent=False
-        )
+        # External input matrix B (optional), created after the transition parameters
+        self._init_external_matrix()
 
     @property
     def cell_type(self) -> str:
         """Return the type of HCNN cell."""
         return "lspa"
 
-    def forward(
-        self,
-        state: torch.Tensor,
-        teacher_forcing: bool = False,
-        observation: Optional[torch.Tensor] = None,
-        externals: Optional[torch.Tensor] = None
-    ) -> CellOutput:
-        """
-        Forward pass through the Large Sparse HCNN Cell.
-
-        Parameters
-        ----------
-        state : torch.Tensor
-            Current state tensor of shape (batch_size, n_state_vars)
-        teacher_forcing : bool, default=False
-            Whether to apply teacher forcing correction
-        observation : Optional[torch.Tensor], default=None
-            Ground truth observation for teacher forcing of shape (batch_size, n_obs_vars)
-            Required when teacher_forcing=True
-        externals : Optional[torch.Tensor], default=None
-            External variables of shape (batch_size, n_ext_vars)
-
-        Returns
-        -------
-        Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]
-            - expectation: Predicted observation (batch_size, n_obs_vars)
-            - next_state: Next state (batch_size, n_state_vars)
-            - delta_term: Observation error (y_true - y_pred) if teacher_forcing, else None
-
-        Raises
-        ------
-        ValueError
-            If teacher_forcing=True but observation is not provided
-            If externals is provided but cell doesn't support external variables
-            If externals is not provided but cell expects external variables
-        """
-        # Compute expectation (predicted observation)
-        expectation = torch.matmul(state, torch.as_tensor(self.ConMat, device=state.device).T)
-
-        # Handle external variables
-        external_contribution = torch.zeros_like(state)
-        if self.n_ext_vars is not None:
-            if externals is None:
-                raise ValueError(
-                    "External variables expected but not provided. "
-                    f"Cell was initialized with n_ext_vars={self.n_ext_vars}"
-                )
-            if externals.shape[-1] != self.n_ext_vars:
-                raise ValueError(
-                    f"Expected {self.n_ext_vars} external variables, "
-                    f"got {externals.shape[-1]}"
-                )
-            if self.B is not None:
-                external_contribution = self.B(externals)
-        elif externals is not None:
-            raise ValueError(
-                "External variables provided but cell doesn't support them. "
-                "Initialize cell with n_ext_vars parameter."
-            )
-
-        # Apply teacher forcing if requested
-        if teacher_forcing:
-            if observation is None:
-                raise ValueError(
-                    "`observation` must be provided when `teacher_forcing` is True."
-                )
-            if observation.shape[-1] != self.n_obs_vars:
-                raise ValueError(
-                    f"Expected {self.n_obs_vars} observation variables, "
-                    f"got {observation.shape[-1]}"
-                )
-
-            # Compute delta term (observation error)
-            delta_term = observation - expectation
-
-            # Apply teacher forcing correction
-            # r_t = s_t - C^T (y_pred - y_true) = s_t + C^T delta_t: the observed part of r_t equals y_t
-            teach_forc = torch.matmul(delta_term, torch.as_tensor(self.ConMat, device=delta_term.device))
-            corrected_state = state + teach_forc
-
-            # Compute next state using sparse transformation
-            next_state = self.Sparse_A(torch.tanh(corrected_state)) + external_contribution
-
-            return CellOutput(expectation, next_state, delta_term, {})
-
-        else:
-            # No teacher forcing - standard forward pass
-            r_state = torch.matmul(state, torch.as_tensor(self.Ide, device=state.device))
-            next_state = self.Sparse_A(torch.tanh(r_state)) + external_contribution
-
-            return CellOutput(expectation, next_state, None, {})
-
-    def get_observation_matrix(self) -> torch.Tensor:
-        """Get the observation matrix."""
-        return torch.as_tensor(self.ConMat, device=next(self.parameters()).device)
+    def transition(self, r: torch.Tensor) -> torch.Tensor:
+        """s_{t+1} = (M * A) tanh(r_t) (before external inputs)."""
+        return self.Sparse_A(torch.tanh(r))
 
     def get_sparse_transition_matrix(self) -> torch.Tensor:
         """Get the current sparse state transition matrix weights."""
@@ -229,10 +113,6 @@ class LSpaHCNNCell(BaseHCNNCell):
     def visualize_sparsity_pattern(self) -> torch.Tensor:
         """Get the current sparsity pattern for visualization."""
         return self.Sparse_A.visualize_sparsity_pattern()
-
-    def get_external_input_matrix(self) -> Optional[torch.Tensor]:
-        """Get the external input matrix weights if available."""
-        return self.B.weight if self.B is not None else None
 
     def reset_parameters(self):
         """Reset all parameters to their initial values."""
